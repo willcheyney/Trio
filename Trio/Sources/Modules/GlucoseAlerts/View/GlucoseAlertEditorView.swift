@@ -64,7 +64,7 @@ struct GlucoseAlertEditorView: View {
                     soundFilename: $working.soundFilename
                 )
 
-                if working.type.supportsChime, working.playsSound {
+                if working.playsSound {
                     chimeSection
                 }
 
@@ -124,8 +124,8 @@ struct GlucoseAlertEditorView: View {
         }.listRowBackground(Color.chart)
     }
 
-    /// Opt-in CGM-style chime for low / urgent-low. Off (Continuous) by
-    /// default; existing alarms decode as Continuous.
+    /// Opt-in CGM-style chime. Off (Continuous) by default; existing alarms
+    /// decode as Continuous.
     private var chimeSection: some View {
         Section(
             header: Text("Alarm Sound Behavior"),
@@ -151,11 +151,11 @@ struct GlucoseAlertEditorView: View {
         case .chime:
             if working.overridesSilenceAndDND {
                 return String(
-                    localized: "Plays one short chime, then another at the chosen interval while glucose stays low and the alarm isn't acknowledged. Reminders are triggered by new CGM readings, so they need Trio to keep receiving data in the background. Chimes play at media volume — keep it turned up. This is best-effort and is not an Apple Critical Alert."
+                    localized: "Plays one short chime, then another at the chosen interval while the alarm condition persists and isn't acknowledged. Reminders are triggered by new CGM readings and loop updates, so they need Trio to keep receiving data in the background. Chimes play at media volume — keep it turned up. This is best-effort and is not an Apple Critical Alert."
                 )
             }
             return String(
-                localized: "Plays one short chime, then another at the chosen interval while glucose stays low. With Override Silence & Focus Mode off, the chime is silenced by Silent Mode and Focus."
+                localized: "Plays one short chime, then another at the chosen interval while the alarm condition persists. With Override Silence & Focus Mode off, the chime is silenced by Silent Mode and Focus."
             )
         }
     }

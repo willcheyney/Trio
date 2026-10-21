@@ -19,11 +19,12 @@ import Swinject
 ///
 /// Throttling + snooze are inherited from `TrioAlertManager.issueAlert`. The
 /// coordinator additionally tracks per-alarm firing state so it can retract
-/// the alert when the condition recovers (no flap-spam). Low / urgent-low
-/// alarms in CGM-style chime mode are re-issued with one short chime per
-/// `chimeRepeatInterval` while the episode stays low and unacknowledged;
-/// reminders are driven by fresh CGM readings, never by pre-scheduled
-/// notifications, so missing data never produces a reminder.
+/// the alert when the condition recovers (no flap-spam). Alarms in CGM-style
+/// chime mode are re-issued with one short chime per `chimeRepeatInterval`
+/// while the condition persists and the alert is unacknowledged. Reminders
+/// are driven by fresh CGM readings (or, for forecast / carbs-required, fresh
+/// determinations), never by pre-scheduled notifications, so missing data
+/// never produces a reminder.
 final class GlucoseAlertCoordinator: Injectable {
     @Injected() private var broadcaster: Broadcaster!
     @Injected() private var glucoseStorage: GlucoseStorage!
@@ -33,8 +34,8 @@ final class GlucoseAlertCoordinator: Injectable {
 
     private let evaluationQueue = DispatchQueue(label: "GlucoseAlertCoordinator.queue")
     private var firingAlertIDs: Set<UUID> = []
-    /// When each firing alarm last sounded, and the CGM reading that drove
-    /// it. Only touched on `evaluationQueue`; cleared with `firingAlertIDs`.
+    /// When each firing alarm last sounded, and the timestamp of the CGM
+    /// reading or determination that drove it. Only touched on `evaluationQueue`; cleared with `firingAlertIDs`.
     private var lastSoundedAt: [UUID: (issuedAt: Date, readingDate: Date)] = [:]
     private var subscriptions = Set<AnyCancellable>()
     @SyncAccess private var alertsSnapshot: [GlucoseAlert] = []
@@ -90,7 +91,7 @@ final class GlucoseAlertCoordinator: Injectable {
     /// Pure reminder predicate for an already-firing CGM-style alarm.
     /// A reminder is due only when the alarm is still unacknowledged, the
     /// interval has elapsed since the last sound, and the reading is newer
-    /// than the one that drove the last sound — so a stalled CGM (or a
+    /// than the one that drove the last sound — so a stalled CGM / loop (or a
     /// storage update with no new reading) can't keep re-chiming on old data.
     static func isChimeReminderDue(
         lastIssuedAt: Date?,
@@ -254,6 +255,7 @@ final class GlucoseAlertCoordinator: Injectable {
         let snapshot = alertsSnapshot
         let configuration = configurationSnapshot
         let now = Date()
+        let sourceDate = Self.sourceDate(of: determination, fallback: now)
 
         // Suppress forecasted-low if any urgent-low or low alarm is already
         // firing — the forecast came true (or worse), no point preempting
@@ -268,13 +270,20 @@ final class GlucoseAlertCoordinator: Injectable {
                 retractIfFiring(alarm)
                 continue
             }
-            evaluateForecastBased(alarm, determination: determination, now: now, configuration: configuration)
+            evaluateForecastBased(
+                alarm,
+                determination: determination,
+                sourceDate: sourceDate,
+                now: now,
+                configuration: configuration
+            )
         }
     }
 
     private func evaluateForecastBased(
         _ alarm: GlucoseAlert,
         determination: Determination,
+        sourceDate: Date,
         now: Date,
         configuration: GlucoseAlertConfiguration
     ) {
@@ -287,7 +296,7 @@ final class GlucoseAlertCoordinator: Injectable {
         }
 
         if result.predictedGlucose <= alarm.thresholdMgDL {
-            fireIfNeeded(alarm, valueMgDL: result.predictedGlucose)
+            fireIfNeeded(alarm, valueMgDL: result.predictedGlucose, readingDate: sourceDate, now: now)
         } else if shouldRetract(alarm, latestMgDL: result.predictedGlucose) {
             retractIfFiring(alarm)
         }
@@ -306,6 +315,7 @@ final class GlucoseAlertCoordinator: Injectable {
         let configuration = configurationSnapshot
         let now = Date()
         let carbsReq: Decimal? = determination.carbsReq
+        let sourceDate = Self.sourceDate(of: determination, fallback: now)
 
         for alarm in snapshot where alarm.type == .carbsRequired {
             guard alarm.shouldEvaluate, !isAlarmSnoozed(alarm, at: now),
@@ -318,7 +328,7 @@ final class GlucoseAlertCoordinator: Injectable {
                 retractIfFiring(alarm)
                 continue
             }
-            fireIfNeeded(alarm, valueMgDL: carbs)
+            fireIfNeeded(alarm, valueMgDL: carbs, readingDate: sourceDate, now: now)
         }
     }
 
@@ -328,7 +338,8 @@ final class GlucoseAlertCoordinator: Injectable {
     /// dispatch through `evaluationQueue` before invoking the evaluators),
     /// so `firingAlertIDs` is serialized without an extra `.sync` hop.
     ///
-    /// `readingDate` is set only on the reading-driven path. A CGM-style
+    /// `readingDate` is the timestamp of the CGM reading or determination
+    /// that drove this evaluation. A CGM-style
     /// alarm that is already firing re-issues (one new chime + notification
     /// under the same identifier) when `isChimeReminderDue` says so.
     private func fireIfNeeded(
@@ -452,6 +463,13 @@ final class GlucoseAlertCoordinator: Injectable {
     }
 
     // MARK: - Helpers
+
+    /// Timestamp identifying a determination for chime de-duplication. Each
+    /// broadcast follows a fresh determineBasal run, so `fallback` (now) is
+    /// still a new value if oref left both fields unset.
+    private static func sourceDate(of determination: Determination, fallback: Date) -> Date {
+        determination.timestamp ?? determination.deliverAt ?? fallback
+    }
 
     private func isAlarmSnoozed(_ alarm: GlucoseAlert, at date: Date) -> Bool {
         guard let until = alarm.snoozedUntil else { return false }

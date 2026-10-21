@@ -194,11 +194,11 @@ import Testing
         #expect(decoded.usesChime)
     }
 
-    @Test("Only low and urgentLow honour chime mode") func chimeLimitedToLowFamily() {
+    @Test("Every glucose alarm type honours chime mode") func chimeOnAllTypes() {
         for type in GlucoseAlertType.allCases {
             var a = GlucoseAlert(type: type)
             a.soundBehavior = .chime
-            #expect(a.usesChime == (type == .low || type == .urgentLow))
+            #expect(a.usesChime)
         }
     }
 

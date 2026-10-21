@@ -19,10 +19,10 @@ struct GlucoseAlert: Identifiable, Codable, Equatable {
     /// Critical Alerts entitlement.
     var overridesSilenceAndDND: Bool
     var activeOption: ActiveOption
-    /// Opt-in CGM-style behaviour for low / urgent-low: one short chime per
-    /// alert, re-issued every `chimeRepeatInterval` while the episode is still
-    /// low and unacknowledged, instead of a sound that loops until
-    /// acknowledged. Ignored for other types (`usesChime`).
+    /// Opt-in CGM-style behaviour: one short chime per alert, re-issued every
+    /// `chimeRepeatInterval` while the condition persists and the alert is
+    /// unacknowledged, instead of a sound that loops until acknowledged.
+    /// Available on every glucose alarm type.
     var soundBehavior: GlucoseAlertSoundBehavior
     var chimeRepeatInterval: GlucoseAlertChimeInterval
     /// Per-alarm snooze. Distinct from the global mute on `AlertMuter`.
@@ -43,10 +43,9 @@ struct GlucoseAlert: Identifiable, Codable, Equatable {
         snoozedUntil = nil
     }
 
-    /// True when this alarm should use the CGM-style chime pathway. Only the
-    /// reading-driven low family supports it.
+    /// True when this alarm should use the CGM-style chime pathway.
     var usesChime: Bool {
-        soundBehavior == .chime && type.supportsChime
+        soundBehavior == .chime
     }
 
     /// Whether the coordinator should fire this alarm when a reading breaches.
@@ -102,7 +101,7 @@ struct GlucoseAlert: Identifiable, Codable, Equatable {
     }
 }
 
-/// How a low / urgent-low alarm sounds.
+/// How a glucose alarm sounds.
 enum GlucoseAlertSoundBehavior: String, Codable, CaseIterable, Identifiable, DayNightDisplayable {
     /// Existing behaviour: sound loops until acknowledged.
     case continuous
@@ -119,7 +118,7 @@ enum GlucoseAlertSoundBehavior: String, Codable, CaseIterable, Identifiable, Day
     }
 }
 
-/// Re-chime cadence while a CGM-style alarm stays low and unacknowledged.
+/// Re-chime cadence while a CGM-style alarm's condition persists unacknowledged.
 /// Raw value is minutes.
 enum GlucoseAlertChimeInterval: Int, Codable, CaseIterable, Identifiable, DayNightDisplayable {
     case fiveMinutes = 5

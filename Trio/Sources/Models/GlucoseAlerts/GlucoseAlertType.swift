@@ -45,11 +45,6 @@ enum GlucoseAlertType: String, Codable, CaseIterable, Identifiable {
         self = parsed
     }
 
-    /// Types that offer the CGM-style chime sound behaviour.
-    var supportsChime: Bool {
-        self == .low || self == .urgentLow
-    }
-
     var displayName: String {
         switch self {
         case .urgentLow: return String(localized: "Urgent Low Glucose")
