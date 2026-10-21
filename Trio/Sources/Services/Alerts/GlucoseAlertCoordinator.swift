@@ -352,14 +352,25 @@ final class GlucoseAlertCoordinator: Injectable {
         if firingAlertIDs.contains(alarm.id) {
             guard alarm.usesChime, let readingDate else { return }
             let last = lastSoundedAt[alarm.id]
+            let isAcknowledged = !trioAlertManager.isAlertActive(identifier: alertID(for: alarm))
             guard Self.isChimeReminderDue(
                 lastIssuedAt: last?.issuedAt,
                 lastReadingDate: last?.readingDate,
                 readingDate: readingDate,
                 interval: alarm.chimeRepeatInterval.timeInterval,
-                isAcknowledged: !trioAlertManager.isAlertActive(identifier: alertID(for: alarm)),
+                isAcknowledged: isAcknowledged,
                 now: now
-            ) else { return }
+            ) else {
+                let sinceLast = last.map { Int(now.timeIntervalSince($0.issuedAt)) }
+                debug(
+                    .service,
+                    "GlucoseAlertCoordinator: \(alarm.type.rawValue) chime reminder not due (acknowledged=\(isAcknowledged), sinceLast=\(sinceLast.map(String.init) ?? "nil")s, interval=\(alarm.chimeRepeatInterval.rawValue)m)"
+                )
+                return
+            }
+            debug(.service, "GlucoseAlertCoordinator: \(alarm.type.rawValue) chime reminder due")
+        } else {
+            debug(.service, "GlucoseAlertCoordinator: \(alarm.type.rawValue) firing (chime=\(alarm.usesChime))")
         }
         firingAlertIDs.insert(alarm.id)
         if let readingDate {
@@ -563,6 +574,7 @@ extension GlucoseAlertCoordinator: GlucoseSnoozeObserver {
                 matchingAlarms.append(updated[index])
             }
             guard !matchingAlarms.isEmpty else { return }
+            debug(.service, "GlucoseAlertCoordinator: \(type.rawValue) snoozed until \(untilDate)")
             store.alerts = updated
             for alarm in matchingAlarms {
                 self.trioAlertManager.retractAlert(identifier: self.alertID(for: alarm))

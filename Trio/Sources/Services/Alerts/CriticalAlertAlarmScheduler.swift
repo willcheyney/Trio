@@ -66,7 +66,17 @@ final class CriticalAlertAlarmScheduler {
     /// Returns true if AlarmKit will handle it, so the caller skips the audio
     /// fallback. `onScheduleFailure` runs if the async schedule throws, so the
     /// caller can still play the fallback rather than leaving the alert silent.
-    @discardableResult func scheduleAlarm(for alert: Alert, onScheduleFailure: @escaping () -> Void) -> Bool {
+    ///
+    /// `stopAfter` turns the alarm into a short chime for CGM-style glucose
+    /// alarms: Trio stops it that many seconds after it starts ringing. If iOS
+    /// suspends Trio first, the stop runs as soon as Trio is next woken (e.g.
+    /// by the next CGM reading), so the alarm can ring longer but never stays
+    /// silent. Stopping it this way is not an acknowledgement.
+    @discardableResult func scheduleAlarm(
+        for alert: Alert,
+        stopAfter: TimeInterval? = nil,
+        onScheduleFailure: @escaping () -> Void
+    ) -> Bool {
         guard #available(iOS 26, *), isAuthorizedAndAvailable else { return false }
         #if canImport(AlarmKit)
             cancelAlarm(for: alert.identifier)
@@ -108,6 +118,10 @@ final class CriticalAlertAlarmScheduler {
                         "Scheduled AlarmKit alarm %{public}@ for %{public}@",
                         log: log, type: .info, id.uuidString, identifier.value
                     )
+                    if let stopAfter {
+                        try? await Task.sleep(nanoseconds: UInt64((Self.immediateFireDelay + stopAfter) * 1_000_000_000))
+                        self?.stopChime(id: id, for: identifier)
+                    }
                 } catch {
                     os_log(
                         "Failed to schedule AlarmKit alarm for %{public}@: %{public}@ — falling back to audio",
@@ -120,6 +134,19 @@ final class CriticalAlertAlarmScheduler {
             return true
         #else
             return false
+        #endif
+    }
+
+    /// Ends a short-chime alarm unless it has already been replaced (a newer
+    /// chime for the same alert) or cancelled by acknowledge / retract.
+    private func stopChime(id: UUID, for identifier: Alert.Identifier) {
+        guard #available(iOS 26, *) else { return }
+        #if canImport(AlarmKit)
+            guard alarmsByAlert[identifier] == id else { return }
+            alarmsByAlert.removeValue(forKey: identifier)
+            try? AlarmManager.shared.stop(id: id)
+            try? AlarmManager.shared.cancel(id: id)
+            os_log("Stopped AlarmKit chime %{public}@ for %{public}@", log: log, type: .info, id.uuidString, identifier.value)
         #endif
     }
 

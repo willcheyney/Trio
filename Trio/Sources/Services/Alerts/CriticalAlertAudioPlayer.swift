@@ -81,7 +81,9 @@ final class CriticalAlertAudioPlayer {
     /// the tone, cut off after `maxDuration`, with one vibration and no loop.
     /// Runs while Trio is awake (e.g. woken by a Bluetooth CGM reading); the
     /// active audio session keeps the process alive for the chime itself.
-    func playOnce(soundNamed soundName: String, maxDuration: TimeInterval = 3) {
+    /// Returns false if the audio session or player could not be started, so
+    /// the caller can fall back to another channel instead of staying silent.
+    @discardableResult func playOnce(soundNamed soundName: String, maxDuration: TimeInterval = 3) -> Bool {
         stop()
 
         AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
@@ -92,7 +94,7 @@ final class CriticalAlertAudioPlayer {
             ?? Bundle.main.url(forResource: "critical", withExtension: "caf")
         else {
             os_log("No sound found for chime %{public}@", log: log, type: .error, soundName)
-            return
+            return false
         }
 
         do {
@@ -108,7 +110,7 @@ final class CriticalAlertAudioPlayer {
             guard p.play() else {
                 os_log("AVAudioPlayer.play() returned false for chime %{public}@", log: log, type: .error, url.lastPathComponent)
                 try? session.setActive(false, options: [.notifyOthersOnDeactivation])
-                return
+                return false
             }
             player = p
             // Ends the chime (and releases the session) after one short pass.
@@ -120,8 +122,10 @@ final class CriticalAlertAudioPlayer {
                 Task { @MainActor in self?.stop() }
             }
             os_log("Started one-shot chime (duration=%{public}.2fs)", log: log, type: .info, p.duration)
+            return true
         } catch {
             os_log("Failed to start chime playback: %{public}@", log: log, type: .error, String(describing: error))
+            return false
         }
     }
 
