@@ -29,6 +29,12 @@ final class SpyAlertManager: TrioAlertManager {
         retractedIdentifiers.append(identifier)
     }
 
+    func issueChimeAlert(_ alert: Alert) {
+        issueAlert(alert)
+    }
+
+    func isAlertActive(identifier _: Alert.Identifier) -> Bool { true }
+
     // MARK: - No-op stubs
 
     func register(responder _: AlertResponder, for _: String) {}

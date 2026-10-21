@@ -88,3 +88,78 @@ import Testing
         #expect(readingDriven == [.high, .low, .urgentLow])
     }
 }
+
+@Suite("Trio Alerts: CGM-style chime reminder cadence") struct ChimeReminderCadenceTests {
+    private let start = Date(timeIntervalSince1970: 1_700_000_000)
+    private let fiveMin: TimeInterval = 300
+
+    private func due(
+        after elapsed: TimeInterval,
+        readingAge: TimeInterval = 0,
+        lastIssued: Date? = nil,
+        lastReading: Date? = nil,
+        interval: TimeInterval = 300,
+        acknowledged: Bool = false
+    ) -> Bool {
+        let now = start.addingTimeInterval(elapsed)
+        return GlucoseAlertCoordinator.isChimeReminderDue(
+            lastIssuedAt: lastIssued ?? start,
+            lastReadingDate: lastReading ?? start,
+            readingDate: now.addingTimeInterval(-readingAge),
+            interval: interval,
+            isAcknowledged: acknowledged,
+            now: now
+        )
+    }
+
+    @Test("Per-minute readings inside the interval don't re-chime") func noChimeBetweenReminders() {
+        for minute in 1 ... 4 {
+            #expect(!due(after: TimeInterval(minute * 60)))
+        }
+    }
+
+    @Test("Reminder is due once the interval elapses") func dueAtInterval() {
+        #expect(due(after: fiveMin))
+        #expect(due(after: fiveMin + 60))
+    }
+
+    @Test("Reading up to 30 s early still counts; earlier does not") func toleranceWindow() {
+        #expect(due(after: fiveMin - 30))
+        #expect(!due(after: fiveMin - 31))
+    }
+
+    @Test("Honours 10 and 15 minute intervals") func longerIntervals() {
+        #expect(!due(after: fiveMin, interval: 600))
+        #expect(due(after: 600, interval: 600))
+        #expect(!due(after: 600, interval: 900))
+        #expect(due(after: 900, interval: 900))
+    }
+
+    @Test("Acknowledged alarm never re-chimes") func acknowledgedStops() {
+        #expect(!due(after: fiveMin * 3, acknowledged: true))
+    }
+
+    @Test("No new CGM reading since the last chime means no reminder") func staleReadingNoReminder() {
+        // Latest reading is the same one that drove the last chime.
+        let now = start.addingTimeInterval(fiveMin * 2)
+        #expect(!GlucoseAlertCoordinator.isChimeReminderDue(
+            lastIssuedAt: start,
+            lastReadingDate: start,
+            readingDate: start,
+            interval: fiveMin,
+            isAcknowledged: false,
+            now: now
+        ))
+    }
+
+    @Test("An alarm that hasn't sounded yet is never a 'reminder'") func noHistoryNoReminder() {
+        #expect(!GlucoseAlertCoordinator.isChimeReminderDue(
+            lastIssuedAt: nil,
+            lastReadingDate: nil,
+            readingDate: start,
+            interval: fiveMin,
+            isAcknowledged: false,
+            now: start.addingTimeInterval(fiveMin)
+        ))
+    }
+}

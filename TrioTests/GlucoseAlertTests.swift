@@ -163,3 +163,46 @@ import Testing
         #expect(decoded == original)
     }
 }
+
+@Suite("Trio Alerts: GlucoseAlert CGM-style chime settings") struct GlucoseAlertChimeSettingsTests {
+    @Test("New alarms default to continuous with a 5-minute chime interval") func defaultsOff() {
+        for type in GlucoseAlertType.allCases {
+            let a = GlucoseAlert(type: type)
+            #expect(a.soundBehavior == .continuous)
+            #expect(a.chimeRepeatInterval == .fiveMinutes)
+            #expect(!a.usesChime)
+        }
+    }
+
+    @Test("Alarms saved before the chime option decode as continuous") func legacyDecodesContinuous() throws {
+        let legacy = """
+        {"id":"\(UUID().uuidString)","type":"low","name":"Low","isEnabled":true,"thresholdMgDL":72,
+         "soundFilename":"trill.caf","playsSound":true,"overridesSilenceAndDND":true,"activeOption":"always"}
+        """
+        let a = try JSONDecoder().decode(GlucoseAlert.self, from: Data(legacy.utf8))
+        #expect(a.soundBehavior == .continuous)
+        #expect(a.chimeRepeatInterval == .fiveMinutes)
+        #expect(a.overridesSilenceAndDND)
+    }
+
+    @Test("Chime settings round-trip through Codable") func roundTrip() throws {
+        var a = GlucoseAlert(type: .urgentLow)
+        a.soundBehavior = .chime
+        a.chimeRepeatInterval = .fifteenMinutes
+        let decoded = try JSONDecoder().decode(GlucoseAlert.self, from: JSONEncoder().encode(a))
+        #expect(decoded == a)
+        #expect(decoded.usesChime)
+    }
+
+    @Test("Only low and urgentLow honour chime mode") func chimeLimitedToLowFamily() {
+        for type in GlucoseAlertType.allCases {
+            var a = GlucoseAlert(type: type)
+            a.soundBehavior = .chime
+            #expect(a.usesChime == (type == .low || type == .urgentLow))
+        }
+    }
+
+    @Test("Chime intervals are exactly 5, 10 and 15 minutes") func intervals() {
+        #expect(GlucoseAlertChimeInterval.allCases.map(\.timeInterval) == [300, 600, 900])
+    }
+}

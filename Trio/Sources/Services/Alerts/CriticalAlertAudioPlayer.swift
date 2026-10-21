@@ -76,6 +76,55 @@ final class CriticalAlertAudioPlayer {
         }
     }
 
+    /// One short chime for CGM-style glucose alarms: same silent-switch- and
+    /// Focus-bypassing `.playback` session as `play`, but a single pass of
+    /// the tone, cut off after `maxDuration`, with one vibration and no loop.
+    /// Runs while Trio is awake (e.g. woken by a Bluetooth CGM reading); the
+    /// active audio session keeps the process alive for the chime itself.
+    func playOnce(soundNamed soundName: String, maxDuration: TimeInterval = 3) {
+        stop()
+
+        AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
+
+        let resource = (soundName as NSString).deletingPathExtension
+        let ext = (soundName as NSString).pathExtension.isEmpty ? "caf" : (soundName as NSString).pathExtension
+        guard let url = Bundle.main.url(forResource: resource, withExtension: ext)
+            ?? Bundle.main.url(forResource: "critical", withExtension: "caf")
+        else {
+            os_log("No sound found for chime %{public}@", log: log, type: .error, soundName)
+            return
+        }
+
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .default, options: [.duckOthers, .mixWithOthers])
+            try session.setActive(true, options: [])
+            volumeBooster.boost(to: minimumSystemVolume)
+
+            let p = try AVAudioPlayer(contentsOf: url)
+            p.numberOfLoops = 0
+            p.volume = 1.0
+            p.prepareToPlay()
+            guard p.play() else {
+                os_log("AVAudioPlayer.play() returned false for chime %{public}@", log: log, type: .error, url.lastPathComponent)
+                try? session.setActive(false, options: [.notifyOthersOnDeactivation])
+                return
+            }
+            player = p
+            // Ends the chime (and releases the session) after one short pass.
+            // Reuses `vibrationTimer` so `stop()` also cancels this cut-off.
+            vibrationTimer = Timer.scheduledTimer(
+                withTimeInterval: min(maxDuration, p.duration),
+                repeats: false
+            ) { [weak self] _ in
+                Task { @MainActor in self?.stop() }
+            }
+            os_log("Started one-shot chime (duration=%{public}.2fs)", log: log, type: .info, p.duration)
+        } catch {
+            os_log("Failed to start chime playback: %{public}@", log: log, type: .error, String(describing: error))
+        }
+    }
+
     private func startVibration() {
         AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
         vibrationTimer = Timer.scheduledTimer(withTimeInterval: vibrationInterval, repeats: true) { _ in

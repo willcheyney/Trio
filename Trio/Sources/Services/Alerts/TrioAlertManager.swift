@@ -7,6 +7,13 @@ import UserNotifications
 
 protocol TrioAlertManager: AnyObject {
     func issueAlert(_ alert: Alert)
+    /// CGM-style glucose alarm: one short chime instead of a looping sound,
+    /// never routed through AlarmKit (which rings until Stop). Bypasses the
+    /// 5-min throttle so the coordinator's repeat cadence is authoritative —
+    /// the coordinator is responsible for not calling this more often.
+    func issueChimeAlert(_ alert: Alert)
+    /// False once the alert has been acknowledged, snoozed or retracted.
+    func isAlertActive(identifier: Alert.Identifier) -> Bool
     func retractAlert(identifier: Alert.Identifier)
     /// Re-presents unacknowledged history alerts after a cold start — the
     /// in-app presentation state dies with the process, but the history
@@ -56,6 +63,11 @@ final class BaseTrioAlertManager: TrioAlertManager, Injectable {
     /// is `@MainActor` (its `MPVolumeView` + `Timer` members require main),
     /// but `BaseTrioAlertManager.init` runs on the Swinject resolve thread.
     @MainActor private var criticalAudioPlayer: CriticalAlertAudioPlayer?
+    /// The alert whose sound `criticalAudioPlayer` is currently playing.
+    /// Retracting or acknowledging a *different* alert must not silence it —
+    /// e.g. on a Low → Urgent Low transition the coordinator issues Urgent
+    /// Low and then retracts Low in the same pass.
+    @MainActor private var criticalAudioOwner: Alert.Identifier?
     /// Preferred audible channel on iOS 26+. Falls back to `criticalAudioPlayer`
     /// when AlarmKit is unavailable or the user hasn't authorized it.
     @MainActor private var alarmScheduler: CriticalAlertAlarmScheduler?
@@ -188,25 +200,45 @@ final class BaseTrioAlertManager: TrioAlertManager, Injectable {
             // AlarmKit pierces silent/Focus and survives app suspension.
             if alarmScheduler == nil { alarmScheduler = CriticalAlertAlarmScheduler() }
             let scheduled = alarmScheduler?.scheduleAlarm(for: alert) { [weak self] in
-                Task { @MainActor in self?.playAudioFallback(soundNamed: soundName) }
+                Task { @MainActor in self?.playAudioFallback(soundNamed: soundName, for: alert.identifier) }
             } ?? false
             guard !scheduled else { return }
             // Fallback: in-process audio. Only sounds while Trio is running.
-            playAudioFallback(soundNamed: soundName)
+            playAudioFallback(soundNamed: soundName, for: alert.identifier)
         }
     }
 
-    @MainActor private func playAudioFallback(soundNamed soundName: String) {
+    @MainActor private func playAudioFallback(soundNamed soundName: String, for identifier: Alert.Identifier) {
         if criticalAudioPlayer == nil { criticalAudioPlayer = CriticalAlertAudioPlayer() }
+        criticalAudioOwner = identifier
         criticalAudioPlayer?.play(soundNamed: soundName)
+    }
+
+    /// Stops in-process audio only if it belongs to `identifier`.
+    @MainActor private func stopCriticalAudio(for identifier: Alert.Identifier) {
+        guard criticalAudioOwner == identifier else { return }
+        criticalAudioOwner = nil
+        criticalAudioPlayer?.stop()
     }
 
     // MARK: - Issue / Retract
 
     func issueAlert(_ alert: Alert) {
+        issue(alert, chime: false)
+    }
+
+    func issueChimeAlert(_ alert: Alert) {
+        // Each chime is a deliberate reminder from the coordinator's own
+        // cadence; the 5-min throttle would drop a 5-min reminder that lands
+        // a few seconds early.
+        throttler.reset(identifier: alert.identifier)
+        issue(alert, chime: true)
+    }
+
+    private func issue(_ alert: Alert, chime: Bool) {
         debug(
             .service,
-            "TrioAlertManager.issueAlert \(alert.identifier.value) level=\(alert.interruptionLevel)"
+            "TrioAlertManager.issueAlert \(alert.identifier.value) level=\(alert.interruptionLevel) chime=\(chime)"
         )
 
         let now = Date()
@@ -266,21 +298,45 @@ final class BaseTrioAlertManager: TrioAlertManager, Injectable {
         let muted = muter.shouldMute(at: now)
         modalScheduler.schedule(effective)
         // AlarmKit sounds critical alerts itself; posting the notification with
-        // a sound too would play the tone twice, at once.
-        let alarmKitWillSound = alarmKitAvailable
-            && effective.interruptionLevel == .critical
+        // a sound too would play the tone twice, at once. Chime alerts never
+        // use AlarmKit; their critical chime is played in-process instead, so
+        // the notification is likewise posted without its own sound.
+        let inProcessWillSound = effective.interruptionLevel == .critical
             && effective.sound?.filename != nil
             && !muted
+        let alarmKitWillSound = !chime && alarmKitAvailable && inProcessWillSound
+        let chimeWillSound = chime && inProcessWillSound
         userNotificationScheduler.schedule(
             effective,
             muted: muted,
             soundURL: soundLoader.url(for: effective),
-            silenced: alarmKitWillSound
+            silenced: alarmKitWillSound || chimeWillSound
         )
         // `.delayed`/`.repeating` alerts start their audio when the timer
         // fires (`alertDidFire`), not now — this is only their arm time.
         if case .immediate = effective.trigger {
-            playCriticalAudioFallbackIfNeeded(effective, muted: muted)
+            if chime {
+                playChimeIfNeeded(effective, muted: muted)
+            } else {
+                playCriticalAudioFallbackIfNeeded(effective, muted: muted)
+            }
+        }
+    }
+
+    /// One-shot counterpart of `playCriticalAudioFallbackIfNeeded` for
+    /// CGM-style glucose alarms. Non-critical chimes rely on the notification
+    /// sound alone, which already plays once (and obeys Silent Mode).
+    private func playChimeIfNeeded(_ alert: Alert, muted: Bool) {
+        guard alert.interruptionLevel == .critical, !muted,
+              let soundName = alert.sound?.filename
+        else { return }
+        Task { @MainActor in
+            // A previous non-chime alarm may still be ringing via AlarmKit
+            // under this identifier (e.g. mode switched mid-episode).
+            alarmScheduler?.cancelAlarm(for: alert.identifier)
+            if criticalAudioPlayer == nil { criticalAudioPlayer = CriticalAlertAudioPlayer() }
+            criticalAudioOwner = alert.identifier
+            criticalAudioPlayer?.playOnce(soundNamed: soundName)
         }
     }
 
@@ -316,7 +372,7 @@ final class BaseTrioAlertManager: TrioAlertManager, Injectable {
         userNotificationScheduler.unschedule(identifier: identifier)
         throttler.reset(identifier: identifier)
         Task { @MainActor in
-            criticalAudioPlayer?.stop()
+            stopCriticalAudio(for: identifier)
             alarmScheduler?.cancelAlarm(for: identifier)
         }
         alertHistoryStorage.removeAlert(identifier: identifier.alertIdentifier)
@@ -357,7 +413,7 @@ final class BaseTrioAlertManager: TrioAlertManager, Injectable {
         modalScheduler.unschedule(identifier: identifier)
         userNotificationScheduler.unschedule(identifier: identifier)
         Task { @MainActor in
-            criticalAudioPlayer?.stop()
+            stopCriticalAudio(for: identifier)
             alarmScheduler?.cancelAlarm(for: identifier)
         }
         // All matching entries — replay + a genuine re-issue can coexist.

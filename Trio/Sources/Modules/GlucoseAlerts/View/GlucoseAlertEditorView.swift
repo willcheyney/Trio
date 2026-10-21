@@ -64,6 +64,10 @@ struct GlucoseAlertEditorView: View {
                     soundFilename: $working.soundFilename
                 )
 
+                if working.type.supportsChime, working.playsSound {
+                    chimeSection
+                }
+
                 if !isNew, store.canDelete(working) {
                     Section {
                         Button(role: .destructive) {
@@ -118,6 +122,42 @@ struct GlucoseAlertEditorView: View {
                 isOn: $working.overridesSilenceAndDND
             )
         }.listRowBackground(Color.chart)
+    }
+
+    /// Opt-in CGM-style chime for low / urgent-low. Off (Continuous) by
+    /// default; existing alarms decode as Continuous.
+    private var chimeSection: some View {
+        Section(
+            header: Text("Alarm Sound Behavior"),
+            footer: Text(chimeFooter)
+        ) {
+            AlarmEnumMenuPicker(
+                title: String(localized: "Sound"),
+                selection: $working.soundBehavior
+            )
+            if working.soundBehavior == .chime {
+                AlarmEnumMenuPicker(
+                    title: String(localized: "Repeat"),
+                    selection: $working.chimeRepeatInterval
+                )
+            }
+        }.listRowBackground(Color.chart)
+    }
+
+    private var chimeFooter: String {
+        switch working.soundBehavior {
+        case .continuous:
+            return String(localized: "The alarm sound repeats until you acknowledge it.")
+        case .chime:
+            if working.overridesSilenceAndDND {
+                return String(
+                    localized: "Plays one short chime, then another at the chosen interval while glucose stays low and the alarm isn't acknowledged. Reminders are triggered by new CGM readings, so they need Trio to keep receiving data in the background. Chimes play at media volume — keep it turned up. This is best-effort and is not an Apple Critical Alert."
+                )
+            }
+            return String(
+                localized: "Plays one short chime, then another at the chosen interval while glucose stays low. With Override Silence & Focus Mode off, the chime is silenced by Silent Mode and Focus."
+            )
+        }
     }
 
     private var urgentLowBody: some View {

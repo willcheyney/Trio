@@ -19,7 +19,11 @@ import Swinject
 ///
 /// Throttling + snooze are inherited from `TrioAlertManager.issueAlert`. The
 /// coordinator additionally tracks per-alarm firing state so it can retract
-/// the alert when the condition recovers (no flap-spam).
+/// the alert when the condition recovers (no flap-spam). Low / urgent-low
+/// alarms in CGM-style chime mode are re-issued with one short chime per
+/// `chimeRepeatInterval` while the episode stays low and unacknowledged;
+/// reminders are driven by fresh CGM readings, never by pre-scheduled
+/// notifications, so missing data never produces a reminder.
 final class GlucoseAlertCoordinator: Injectable {
     @Injected() private var broadcaster: Broadcaster!
     @Injected() private var glucoseStorage: GlucoseStorage!
@@ -29,6 +33,9 @@ final class GlucoseAlertCoordinator: Injectable {
 
     private let evaluationQueue = DispatchQueue(label: "GlucoseAlertCoordinator.queue")
     private var firingAlertIDs: Set<UUID> = []
+    /// When each firing alarm last sounded, and the CGM reading that drove
+    /// it. Only touched on `evaluationQueue`; cleared with `firingAlertIDs`.
+    private var lastSoundedAt: [UUID: (issuedAt: Date, readingDate: Date)] = [:]
     private var subscriptions = Set<AnyCancellable>()
     @SyncAccess private var alertsSnapshot: [GlucoseAlert] = []
     @SyncAccess private var configurationSnapshot = GlucoseAlertConfiguration()
@@ -73,6 +80,30 @@ final class GlucoseAlertCoordinator: Injectable {
         case .carbsRequired:
             return false
         }
+    }
+
+    /// Slack for CGM transmission jitter: a 5-min reminder may go out on a
+    /// reading that lands up to this much early rather than waiting a
+    /// whole extra reading cycle.
+    static let chimeReminderTolerance: TimeInterval = 30
+
+    /// Pure reminder predicate for an already-firing CGM-style alarm.
+    /// A reminder is due only when the alarm is still unacknowledged, the
+    /// interval has elapsed since the last sound, and the reading is newer
+    /// than the one that drove the last sound — so a stalled CGM (or a
+    /// storage update with no new reading) can't keep re-chiming on old data.
+    static func isChimeReminderDue(
+        lastIssuedAt: Date?,
+        lastReadingDate: Date?,
+        readingDate: Date,
+        interval: TimeInterval,
+        isAcknowledged: Bool,
+        now: Date,
+        tolerance: TimeInterval = chimeReminderTolerance
+    ) -> Bool {
+        guard !isAcknowledged, let lastIssuedAt else { return false }
+        if let lastReadingDate, readingDate <= lastReadingDate { return false }
+        return now.timeIntervalSince(lastIssuedAt) >= interval - tolerance
     }
 
     /// Readings older than this are considered stale and won't drive new
@@ -133,13 +164,14 @@ final class GlucoseAlertCoordinator: Injectable {
             retractAllFiringIfNeeded()
             return
         }
-        guard let latestValue = await fetchLatestReadingMgDL() else { return }
+        guard let latest = await fetchLatestReading() else { return }
         let snapshot = alertsSnapshot
         let configuration = configurationSnapshot
         let now = Date()
         evaluationQueue.async { [weak self] in
             self?.applyReadingBasedEvaluation(
-                latestValue: latestValue,
+                latestValue: latest.mgDL,
+                readingDate: latest.date,
                 snapshot: snapshot,
                 configuration: configuration,
                 now: now
@@ -149,6 +181,7 @@ final class GlucoseAlertCoordinator: Injectable {
 
     private func applyReadingBasedEvaluation(
         latestValue: Decimal,
+        readingDate: Date,
         snapshot: [GlucoseAlert],
         configuration: GlucoseAlertConfiguration,
         now: Date
@@ -165,7 +198,13 @@ final class GlucoseAlertCoordinator: Injectable {
                 retractIfFiring(alarm)
                 continue
             }
-            evaluateReadingBased(alarm, latestMgDL: latestValue, now: now, configuration: configuration)
+            evaluateReadingBased(
+                alarm,
+                latestMgDL: latestValue,
+                readingDate: readingDate,
+                now: now,
+                configuration: configuration
+            )
             if alarm.type == .urgentLow, firingAlertIDs.contains(alarm.id) {
                 urgentLowFiring = true
             }
@@ -175,6 +214,7 @@ final class GlucoseAlertCoordinator: Injectable {
     private func evaluateReadingBased(
         _ alarm: GlucoseAlert,
         latestMgDL: Decimal,
+        readingDate: Date,
         now: Date,
         configuration: GlucoseAlertConfiguration
     ) {
@@ -195,7 +235,7 @@ final class GlucoseAlertCoordinator: Injectable {
         )
 
         if breached {
-            fireIfNeeded(alarm, valueMgDL: latestMgDL)
+            fireIfNeeded(alarm, valueMgDL: latestMgDL, readingDate: readingDate, now: now)
         } else if shouldRetract(alarm, latestMgDL: latestMgDL) {
             retractIfFiring(alarm)
         }
@@ -287,10 +327,33 @@ final class GlucoseAlertCoordinator: Injectable {
     /// Called only from the evaluation queue (forecast + reading paths both
     /// dispatch through `evaluationQueue` before invoking the evaluators),
     /// so `firingAlertIDs` is serialized without an extra `.sync` hop.
-    private func fireIfNeeded(_ alarm: GlucoseAlert, valueMgDL: Decimal) {
+    ///
+    /// `readingDate` is set only on the reading-driven path. A CGM-style
+    /// alarm that is already firing re-issues (one new chime + notification
+    /// under the same identifier) when `isChimeReminderDue` says so.
+    private func fireIfNeeded(
+        _ alarm: GlucoseAlert,
+        valueMgDL: Decimal,
+        readingDate: Date? = nil,
+        now: Date = Date()
+    ) {
         dispatchPrecondition(condition: .onQueue(evaluationQueue))
-        guard !firingAlertIDs.contains(alarm.id) else { return }
+        if firingAlertIDs.contains(alarm.id) {
+            guard alarm.usesChime, let readingDate else { return }
+            let last = lastSoundedAt[alarm.id]
+            guard Self.isChimeReminderDue(
+                lastIssuedAt: last?.issuedAt,
+                lastReadingDate: last?.readingDate,
+                readingDate: readingDate,
+                interval: alarm.chimeRepeatInterval.timeInterval,
+                isAcknowledged: !trioAlertManager.isAlertActive(identifier: alertID(for: alarm)),
+                now: now
+            ) else { return }
+        }
         firingAlertIDs.insert(alarm.id)
+        if let readingDate {
+            lastSoundedAt[alarm.id] = (issuedAt: now, readingDate: readingDate)
+        }
 
         let title = alarm.name.isEmpty ? alarm.type.displayName : alarm.name
         let body = bodyText(for: alarm, valueMgDL: valueMgDL)
@@ -307,13 +370,18 @@ final class GlucoseAlertCoordinator: Injectable {
             interruptionLevel: alarm.overridesSilenceAndDND ? .critical : .timeSensitive,
             sound: alarm.playsSound ? .sound(name: alarm.soundFilename) : nil
         )
-        trioAlertManager.issueAlert(alert)
+        if alarm.usesChime {
+            trioAlertManager.issueChimeAlert(alert)
+        } else {
+            trioAlertManager.issueAlert(alert)
+        }
     }
 
     private func retractIfFiring(_ alarm: GlucoseAlert) {
         dispatchPrecondition(condition: .onQueue(evaluationQueue))
         guard firingAlertIDs.contains(alarm.id) else { return }
         firingAlertIDs.remove(alarm.id)
+        lastSoundedAt.removeValue(forKey: alarm.id)
         trioAlertManager.retractAlert(identifier: alertID(for: alarm))
     }
 
@@ -325,6 +393,7 @@ final class GlucoseAlertCoordinator: Injectable {
                 self.trioAlertManager.retractAlert(identifier: self.alertID(for: alarm))
             }
             self.firingAlertIDs.removeAll()
+            self.lastSoundedAt.removeAll()
         }
     }
 
@@ -401,7 +470,7 @@ final class GlucoseAlertCoordinator: Injectable {
     /// the caller's thread, never lets a `GlucoseStored` managed object cross
     /// queue boundaries (would otherwise trip
     /// `_PFAssertSafeMultiThreadedAccess_impl`).
-    private func fetchLatestReadingMgDL() async -> Decimal? {
+    private func fetchLatestReading() async -> (mgDL: Decimal, date: Date)? {
         let cutoff = Date().addingTimeInterval(-Self.readingFreshnessWindow)
         let predicate = NSPredicate(format: "date >= %@", cutoff as NSDate)
         let context = CoreDataStack.shared.newTaskContext()
@@ -416,8 +485,10 @@ final class GlucoseAlertCoordinator: Injectable {
                 fetchLimit: 1
             )
             return await context.perform {
-                guard let latest = (results as? [GlucoseStored])?.first else { return nil }
-                return Decimal(latest.glucose)
+                guard let latest = (results as? [GlucoseStored])?.first,
+                      let date = latest.date
+                else { return nil }
+                return (mgDL: Decimal(latest.glucose), date: date)
             }
         } catch {
             debug(.service, "GlucoseAlertCoordinator: glucose fetch failed: \(error)")
@@ -453,6 +524,7 @@ extension GlucoseAlertCoordinator: SnoozeObserver {
         guard untilDate > Date() else { return }
         evaluationQueue.async { [weak self] in
             self?.firingAlertIDs.removeAll()
+            self?.lastSoundedAt.removeAll()
         }
     }
 }
@@ -480,6 +552,7 @@ extension GlucoseAlertCoordinator: GlucoseSnoozeObserver {
             let ids = Set(matchingAlarms.map(\.id))
             self.evaluationQueue.async { [weak self] in
                 self?.firingAlertIDs.subtract(ids)
+                for id in ids { self?.lastSoundedAt.removeValue(forKey: id) }
             }
         }
     }
