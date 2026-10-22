@@ -150,6 +150,13 @@ final class CriticalAlertAlarmScheduler {
         #endif
     }
 
+    /// Cancel/stop every AlarmKit alarm Trio has scheduled (global snooze).
+    func cancelAllAlarms() {
+        for identifier in Array(alarmsByAlert.keys) {
+            cancelAlarm(for: identifier)
+        }
+    }
+
     /// Cancel/stop the AlarmKit alarm scheduled for the given alert, if any.
     func cancelAlarm(for identifier: Alert.Identifier) {
         guard #available(iOS 26, *) else { return }

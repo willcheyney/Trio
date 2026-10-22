@@ -59,9 +59,10 @@ final class TrioUserNotificationAlertScheduler {
 
     private func sound(for alert: Alert, muted: Bool, soundURL: URL?) -> UNNotificationSound? {
         let isCritical = alert.interruptionLevel == .critical
-        if muted {
-            return isCritical ? .defaultCriticalSound(withAudioVolume: 0) : nil
-        }
+        // Snoozed: no sound at all. Without the Critical Alerts entitlement
+        // iOS plays a critical sound as an ordinary one, so even a
+        // zero-volume critical sound could be heard.
+        if muted { return nil }
         switch alert.sound {
         case .none,
              .vibrate:

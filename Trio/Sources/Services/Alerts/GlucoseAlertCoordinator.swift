@@ -544,10 +544,10 @@ extension GlucoseAlertCoordinator: SnoozeObserver {
         // "Override Silence & DnD" are issued .critical and pierce the
         // AlertMuter, so the shared mute window alone can't hold them. A
         // shorter per-type snooze (e.g. a 15-min swipe) would otherwise
-        // resurface them mid-window. Urgent low keeps its 15-minute safety
-        // floor and is never bulk-snoozed. An ended snooze (.distantPast)
-        // clears the stamps the same way.
-        for type in GlucoseAlertType.allCases where type != .urgentLow {
+        // resurface them mid-window. Urgent low is included: a snooze
+        // silences every alarm until it expires. An ended snooze
+        // (.distantPast) clears the stamps the same way.
+        for type in GlucoseAlertType.allCases {
             snoozeGlucoseType(type, until: untilDate)
         }
         guard untilDate > Date() else { return }

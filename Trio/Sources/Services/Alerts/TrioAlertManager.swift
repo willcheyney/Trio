@@ -30,13 +30,14 @@ protocol TrioAlertManager: AnyObject {
     /// Canonical snooze entry point used by every snooze surface:
     /// Snooze module, phone UN action, watch UN action, in-app banner.
     /// Persists snoozeUntilDate, mutes AlertMuter, clears any pending
-    /// non-critical UNs, broadcasts `SnoozeObserver`.
+    /// non-critical UNs, silences anything already ringing, broadcasts
+    /// `SnoozeObserver`. A snooze silences every alarm, critical included.
     @MainActor func applySnooze(for duration: TimeInterval) async
     /// Removes pending + already-delivered non-critical user notifications
     /// posted via the new alert pipeline. Used internally when a snooze
     /// begins so previously-scheduled delayed alerts (e.g. not-looping)
     /// don't fire during the snooze window. Critical UNs are left in
-    /// place — they pierce snooze by design.
+    /// place so they stay visible; they are posted without sound while muted.
     func clearPendingNonCriticalNotifications()
 
     var muter: AlertMuter { get }
@@ -215,6 +216,14 @@ final class BaseTrioAlertManager: TrioAlertManager, Injectable {
     }
 
     /// Stops in-process audio only if it belongs to `identifier`.
+    /// Stops whatever critical alarm is sounding right now (AlarmKit or
+    /// in-app audio) without acknowledging it, so a snooze is silent at once.
+    @MainActor private func silenceRingingAlarms() {
+        criticalAudioOwner = nil
+        criticalAudioPlayer?.stop()
+        alarmScheduler?.cancelAllAlarms()
+    }
+
     @MainActor private func stopCriticalAudio(for identifier: Alert.Identifier) {
         guard criticalAudioOwner == identifier else { return }
         criticalAudioOwner = nil
@@ -280,9 +289,10 @@ final class BaseTrioAlertManager: TrioAlertManager, Injectable {
             effective = alert
         }
 
-        // Critical alerts pierce the snooze/mute window. Everything else is
-        // suppressed entirely while muted (no modal, no UN sound, no critical
-        // audio fallback).
+        // Non-critical alerts are suppressed entirely while muted. Critical
+        // alerts are still shown during a snooze but make no sound (no UN
+        // sound, no AlarmKit, no audio fallback) — a snooze silences every
+        // alarm until it expires.
         if effective.interruptionLevel != .critical, muter.shouldMute(at: fireDate) {
             debug(.service, "TrioAlertManager muted \(effective.identifier.value) (snooze window active)")
             return
@@ -295,7 +305,7 @@ final class BaseTrioAlertManager: TrioAlertManager, Injectable {
             self.liveAlerts[effective.identifier] = effective
         }
         recordIssued(effective)
-        let muted = muter.shouldMute(at: now)
+        let muted = muter.shouldMute(at: fireDate)
         modalScheduler.schedule(effective)
         if chime {
             deliverChime(effective, muted: muted)
@@ -574,6 +584,7 @@ final class BaseTrioAlertManager: TrioAlertManager, Injectable {
 
         if duration > 0 {
             muter.mute(for: duration)
+            silenceRingingAlarms()
             await clearPendingNonCriticalNotificationsAndWait()
             modalScheduler.clearNonCriticalBanners()
         } else {
