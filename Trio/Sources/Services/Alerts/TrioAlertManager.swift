@@ -215,7 +215,6 @@ final class BaseTrioAlertManager: TrioAlertManager, Injectable {
         criticalAudioPlayer?.play(soundNamed: soundName)
     }
 
-    /// Stops in-process audio only if it belongs to `identifier`.
     /// Stops whatever critical alarm is sounding right now (AlarmKit or
     /// in-app audio) without acknowledging it, so a snooze is silent at once.
     @MainActor private func silenceRingingAlarms() {
@@ -224,6 +223,7 @@ final class BaseTrioAlertManager: TrioAlertManager, Injectable {
         alarmScheduler?.cancelAllAlarms()
     }
 
+    /// Stops in-process audio only if it belongs to `identifier`.
     @MainActor private func stopCriticalAudio(for identifier: Alert.Identifier) {
         guard criticalAudioOwner == identifier else { return }
         criticalAudioOwner = nil
