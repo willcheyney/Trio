@@ -174,24 +174,26 @@ struct TrioAccessoryCircularView: View {
         GeometryReader { geometry in
             let size = min(geometry.size.width, geometry.size.height)
             let ringWidth = size * 0.1073
-            let dotDiameter = size * 0.108
+            let dotDiameter = size * 0.13
+            let ringColor = entry.isStale ? Color.gray : entry.dotColor
 
             ZStack {
                 Circle()
                     .inset(by: ringWidth / 2)
-                    .stroke(Color(red: 0x1C / 255, green: 0x1C / 255, blue: 0x1E / 255), lineWidth: ringWidth)
+                    .stroke(ringColor.opacity(0.22), lineWidth: ringWidth)
 
                 Text(entry.ageText)
                     .font(.system(size: size * 0.14, weight: .medium, design: .rounded))
                     .foregroundStyle(.white)
-                    .offset(y: -size * 0.216)
+                    .offset(y: -size * 0.236)
 
                 Text(entry.glucoseText)
-                    .font(.system(size: size * 0.32, weight: .medium, design: .rounded))
+                    .font(.system(size: size * 0.36, weight: .medium, design: .rounded))
+                    .tracking(-size * 0.0144)
                     .foregroundStyle(entry.isStale ? Color.gray : Color(red: 0xF2 / 255, green: 0xF2 / 255, blue: 0xF2 / 255))
                     .minimumScaleFactor(0.5)
                     .lineLimit(1)
-                    .frame(width: size * 0.66)
+                    .frame(width: size * 0.74)
 
                 Text(entry.deltaText)
                     .font(.system(size: size * 0.14, weight: .medium, design: .rounded))
@@ -201,6 +203,7 @@ struct TrioAccessoryCircularView: View {
                 if let angle = entry.trendAngle {
                     Circle()
                         .fill(entry.dotColor)
+                        .overlay(Circle().stroke(Color.black, lineWidth: size * 0.028))
                         .frame(width: dotDiameter, height: dotDiameter)
                         // Centre the dot on the ring, then swing it round to the trend's position.
                         .offset(x: size / 2 - ringWidth / 2)

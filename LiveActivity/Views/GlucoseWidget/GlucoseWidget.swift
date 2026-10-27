@@ -304,11 +304,13 @@ private struct GlucoseWidgetChart: View {
                 }
                 LineMark(x: .value("Time", point.date), y: .value("Glucose", point.value))
                     .foregroundStyle(chartColor)
-                    .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round))
+                    // Square ends, so the line stops exactly where the shading does.
+                    .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .butt, lineJoin: .round))
                     .interpolationMethod(.monotone)
             }
         }
-        .chartXScale(domain: display.date.addingTimeInterval(-60 * 60) ... display.date)
+        // Span the readings themselves, so the line and shading run the full width of the dashed lines.
+        .chartXScale(domain: xDomain(points))
         .chartYScale(domain: lowerBound ... upperBound)
         .chartXAxis(.hidden)
         .chartYAxis {
@@ -325,6 +327,14 @@ private struct GlucoseWidgetChart: View {
             }
         }
         .widgetAccentable()
+    }
+
+    /// From the oldest to the newest reading shown; the last hour when there are fewer than two.
+    private func xDomain(_ points: [(date: Date, value: Double)]) -> ClosedRange<Date> {
+        guard let first = points.first?.date, let last = points.last?.date, first < last else {
+            return display.date.addingTimeInterval(-60 * 60) ... display.date
+        }
+        return first ... last
     }
 }
 
