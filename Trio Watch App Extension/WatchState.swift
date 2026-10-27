@@ -465,6 +465,32 @@ import WidgetKit
         WidgetCenter.shared.reloadTimelines(ofKind: "TrioWatchComplication")
     }
 
+    /// Asks the phone for the latest watch state from a background refresh and applies the reply, which updates
+    /// the complication. Does nothing if the phone can't be reached.
+    func refreshFromPhone() async {
+        // A background launch may still be activating the session.
+        for _ in 0 ..< 20 where session?.activationState != .activated {
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        guard let session, session.activationState == .activated, session.isReachable else { return }
+
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            session.sendMessage(
+                [WatchMessageKeys.requestComplicationUpdate: true],
+                replyHandler: { reply in
+                    self.handleIncomingWatchStatePayload(reply)
+                    continuation.resume()
+                },
+                errorHandler: { error in
+                    Task { await WatchLogger.shared.log("⌚️ Complication refresh request failed: \(error)") }
+                    continuation.resume()
+                }
+            )
+        }
+        // Incoming data is applied after a short debounce; give it time to finish.
+        try? await Task.sleep(for: .seconds(1))
+    }
+
     /// Keeps a WatchConnectivity background task alive until the phone's queued data has been delivered and applied.
     func waitForPendingContent() async {
         for _ in 0 ..< 40 {

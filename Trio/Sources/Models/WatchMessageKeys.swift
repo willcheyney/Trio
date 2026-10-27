@@ -3,6 +3,8 @@ enum WatchMessageKeys {
     static let date = "date"
     static let units = "units"
     static let requestWatchUpdate = "requestWatchUpdate"
+    /// Sent by the watch app from a background refresh; the phone replies with the latest watch state.
+    static let requestComplicationUpdate = "requestComplicationUpdate"
     static let watchState = "watchState"
     static let acknowledged = "acknowledged"
     static let ackCode = "ackCode"

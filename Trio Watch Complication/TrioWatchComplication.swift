@@ -16,7 +16,7 @@ struct TrioWatchComplicationEntry: TimelineEntry {
     let readingDate: Date?
 
     /// A reading older than this is shown as stale.
-    static let staleAfter: TimeInterval = 15 * 60
+    static let staleAfter: TimeInterval = 20 * 60
     /// A reading older than this is not shown at all.
     static let expiredAfter: TimeInterval = 60 * 60
 

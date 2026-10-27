@@ -652,6 +652,25 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
         }
     }
 
+    /// Answers the watch app's background request for the latest watch state, which keeps its complication fresh.
+    /// Replying directly works while the watch app is in the background, unlike `sendDataToWatch`.
+    func session(_: WCSession, didReceiveMessage message: [String: Any], replyHandler: @escaping ([String: Any]) -> Void) {
+        guard message[WatchMessageKeys.requestComplicationUpdate] as? Bool == true else {
+            replyHandler([:])
+            return
+        }
+        debug(.watchManager, "📱 Watch requested watch state for its complication.")
+        Task { @MainActor [weak self] in
+            guard let self else {
+                replyHandler([:])
+                return
+            }
+            var state = await self.setupWatchState()
+            state.date = Date()
+            replyHandler([WatchMessageKeys.watchState: self.watchStateToDictionary(from: state)])
+        }
+    }
+
     func session(_: WCSession, didReceiveMessage message: [String: Any]) {
         // Handle logs first - doesn't need self, so it can run even during teardown
         if let logs = message["watchLogs"] as? String {
