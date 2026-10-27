@@ -149,6 +149,7 @@ private struct GlucoseWidgetDisplay {
 
 struct GlucoseWidgetView: View {
     @Environment(\.widgetFamily) private var family
+    @Environment(\.widgetRenderingMode) private var renderingMode
     let entry: GlucoseWidgetEntry
 
     var body: some View {
@@ -225,6 +226,12 @@ struct GlucoseWidgetView: View {
         }
     }
 
+    /// StandBy's night mode tints the widget red and sets brightness from each colour's lightness, so the low and
+    /// high colours would come out dimmer than the clock. There the reading is white, as bright as the clock.
+    private func readingColor(_ display: GlucoseWidgetDisplay) -> Color {
+        renderingMode == .vibrant && !display.isStale ? .white : display.glucoseColor
+    }
+
     private func small(_ display: GlucoseWidgetDisplay) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .top) {
@@ -232,10 +239,10 @@ struct GlucoseWidgetView: View {
                     HStack(alignment: .center, spacing: 3) {
                         Text(display.glucose)
                             .font(.system(size: 34, weight: .bold))
-                            .foregroundStyle(display.glucoseColor)
+                            .foregroundStyle(readingColor(display))
                         Text(display.direction)
                             .font(.system(size: 20, weight: .semibold))
-                            .foregroundStyle(display.glucoseColor)
+                            .foregroundStyle(readingColor(display))
                     }
                     .minimumScaleFactor(0.6)
                     .lineLimit(1)
