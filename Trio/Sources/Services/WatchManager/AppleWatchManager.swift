@@ -14,6 +14,8 @@ protocol WatchManager {
 /// Handles bidirectional communication between iPhone and Apple Watch
 final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchManager {
     private var session: WCSession?
+    /// When a watch state was last sent as complication data, which wakes the watch app but is limited to about 50 a day.
+    private var lastComplicationTransfer: Date?
 
     @Injected() var broadcaster: Broadcaster!
     @Injected() private var apsManager: APSManager!
@@ -600,6 +602,14 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
             session.sendMessage([WatchMessageKeys.watchState: message], replyHandler: nil) { error in
                 debug(.watchManager, "❌ Error sending watch state: \(error)")
             }
+        } else if session.isComplicationEnabled, session.remainingComplicationUserInfoTransfers > 0,
+                  lastComplicationTransfer.map({ -$0.timeIntervalSinceNow >= 30 * 60 }) ?? true
+        {
+            // With the glucose complication on the watch face, this wakes the watch app to refresh it.
+            // Every 30 minutes stays within the daily limit; ordinary transfers fill the gaps.
+            session.transferCurrentComplicationUserInfo([WatchMessageKeys.watchState: message])
+            lastComplicationTransfer = Date()
+            debug(.watchManager, "📤 Transferred new WatchState snapshot as complication data")
         } else {
             session.transferUserInfo([WatchMessageKeys.watchState: message])
             debug(.watchManager, "📤 Transferred new WatchState snapshot via userInfo")

@@ -6,6 +6,8 @@ import UserNotifications
 
     init() {
         WatchNotificationHandler.shared.configure()
+        // Activate WatchConnectivity at launch, including background launches for the complication.
+        _ = WatchState.shared
     }
 
     var body: some Scene {
@@ -18,6 +20,9 @@ import UserNotifications
                     await WatchLogger.shared.flushPersistedLogs()
                 }
             }
+        }
+        .backgroundTask(.watchConnectivity) {
+            await WatchState.shared.waitForPendingContent()
         }
     }
 }

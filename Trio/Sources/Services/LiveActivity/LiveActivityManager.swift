@@ -4,6 +4,7 @@ import CoreData
 import Foundation
 import Swinject
 import UIKit
+import WidgetKit
 
 @available(iOS 16.2, *) private struct ActiveActivity {
     let activity: Activity<LiveActivityAttributes>
@@ -71,6 +72,9 @@ final class LiveActivityData: ObservableObject {
 
     private var data = LiveActivityData()
 
+    /// When the glucose widget was last reloaded while Trio was in the background.
+    private var lastBackgroundWidgetReload: Date?
+
     /// A dispatch queue for handling Core Data change notifications.
     private let queue = DispatchQueue(label: "LiveActivityBridge.queue", qos: .userInitiated)
     private var coreDataPublisher: AnyPublisher<Set<NSManagedObjectID>, Never>?
@@ -131,6 +135,7 @@ final class LiveActivityData: ObservableObject {
     func settingsDidChange(_: TrioSettings) {
         Task { @MainActor in
             await self.pushCurrentContent()
+            self.updateGlucoseWidget()
         }
     }
 
@@ -203,6 +208,7 @@ final class LiveActivityData: ObservableObject {
     private func loadGlucose() async {
         do {
             data.glucoseFromPersistence = try await fetchAndMapGlucose()
+            await updateGlucoseWidget()
         } catch {
             debug(
                 .default,
@@ -426,5 +432,38 @@ final class LiveActivityData: ObservableObject {
         )
 
         await pushUpdate(content)
+    }
+
+    /// Shares the latest readings with the glucose widget and asks WidgetKit to redraw it.
+    ///
+    /// The snapshot is saved on every new reading, so the widget's refresh button always finds the newest one.
+    /// Reloads are free while Trio is open, but in the background they count against WidgetKit's daily budget,
+    /// so they are limited to one every ten minutes unless the reading has just left or re-entered the target range.
+    @MainActor func updateGlucoseWidget() {
+        guard let glucose = data.glucoseFromPersistence, let latest = glucose.first else { return }
+
+        let previous = GlucoseWidgetSnapshot.load()
+        let threeHoursAgo = Date.now.addingTimeInterval(-3 * 60 * 60)
+        let snapshot = GlucoseWidgetSnapshot(
+            readings: glucose.filter { $0.date > threeHoursAgo }
+                .map { GlucoseWidgetSnapshot.Reading(date: $0.date, glucose: $0.glucose) },
+            direction: latest.direction?.symbol,
+            unit: settings.units.rawValue,
+            low: settings.low,
+            high: settings.high
+        )
+        guard snapshot != previous else { return }
+        snapshot.save()
+
+        let isInRange = { (glucose: Int) in Decimal(glucose) > self.settings.low && Decimal(glucose) < self.settings.high }
+        let rangeChanged = previous?.readings.first.map { isInRange($0.glucose) != isInRange(latest.glucose) } ?? true
+        let isForeground = UIApplication.shared.applicationState == .active
+        let reloadDue = lastBackgroundWidgetReload.map { -$0.timeIntervalSinceNow >= 10 * 60 } ?? true
+
+        guard isForeground || rangeChanged || reloadDue else { return }
+        if !isForeground {
+            lastBackgroundWidgetReload = Date.now
+        }
+        WidgetCenter.shared.reloadTimelines(ofKind: GlucoseWidgetSnapshot.kind)
     }
 }

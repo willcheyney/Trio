@@ -1,10 +1,14 @@
 import Foundation
 import SwiftUI
 import WatchConnectivity
+import WidgetKit
 
 /// WatchState manages the communication between the Watch app and the iPhone app using WatchConnectivity.
 /// It handles glucose data synchronization and sending treatment requests (bolus, carbs) to the phone.
 @Observable final class WatchState: NSObject, WCSessionDelegate {
+    /// Created at app launch, so readings the phone sends while the app is in the background still reach the complication.
+    static let shared = WatchState()
+
     // MARK: - Properties
 
     /// The WatchConnectivity session instance used for communication
@@ -444,6 +448,31 @@ import WatchConnectivity
         }
     }
 
+    /// Shares the latest reading with the glucose complication and asks WidgetKit to redraw it.
+    private func updateComplication() {
+        guard let suiteName = Bundle.main.object(forInfoDictionaryKey: "AppGroupID") as? String,
+              let defaults = UserDefaults(suiteName: suiteName),
+              let readingDate = glucoseValues.last?.date
+        else { return }
+
+        defaults.set(currentGlucose, forKey: "complication.glucose")
+        defaults.set(trend ?? "", forKey: "complication.trend")
+        defaults.set(readingDate.timeIntervalSince1970, forKey: "complication.date")
+        WidgetCenter.shared.reloadTimelines(ofKind: "TrioWatchComplication")
+    }
+
+    /// Keeps a WatchConnectivity background task alive until the phone's queued data has been delivered and applied.
+    func waitForPendingContent() async {
+        for _ in 0 ..< 40 {
+            if let session, session.activationState == .activated, !session.hasContentPending {
+                break
+            }
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        // Incoming data is applied after a short debounce; give it time to finish.
+        try? await Task.sleep(for: .seconds(1))
+    }
+
     /// Updates the UI properties
     private func processRawDataForWatchState(_ message: [String: Any]) {
         Task {
@@ -500,6 +529,8 @@ import WatchConnectivity
             }
             .sorted { $0.date < $1.date }
         }
+
+        updateComplication()
 
         if let minYAxisValue = message[WatchMessageKeys.minYAxisValue] {
             if let decimalValue = (minYAxisValue as? NSNumber)?.decimalValue {
