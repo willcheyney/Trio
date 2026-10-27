@@ -1,5 +1,6 @@
 import Combine
 import CoreData
+import CryptoKit
 import Foundation
 import Swinject
 import UIKit
@@ -15,7 +16,7 @@ protocol WatchManager {
 final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchManager {
     private var session: WCSession?
     /// When a watch state was last sent as complication data, which wakes the watch app but is limited to about 50 a day.
-    private var lastComplicationTransfer: Date?
+    @MainActor private var lastComplicationTransfer: Date?
 
     @Injected() var broadcaster: Broadcaster!
     @Injected() private var apsManager: APSManager!
@@ -29,6 +30,7 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
     @Injected() private var bolusCalculationManager: BolusCalculationManager!
     @Injected() private var iobService: IOBService!
     @Injected() private var notificationsManager: UserNotificationsManager!
+    @Injected() private var keychain: Keychain!
 
     private var units: GlucoseUnits = .mgdL
     private var glucoseColorScheme: GlucoseColorScheme = .staticColor
@@ -74,8 +76,12 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
             .sink { [weak self] _ in
                 guard let self = self else { return }
                 // Skip if no watch is paired or app not installed
-                guard let session = self.session, session.isPaired, session.isReachable,
-                      session.isWatchAppInstalled else { return }
+                guard let session = self.session, session.isPaired, session.isWatchAppInstalled else { return }
+                // With the watch app in the background, wake it with the new reading for its complication instead.
+                guard session.isReachable else {
+                    Task { await self.sendComplicationUpdate() }
+                    return
+                }
                 Task {
                     let state = await self.setupWatchState()
                     await self.sendDataToWatch(state)
@@ -174,8 +180,16 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
     /// Prepares the current state data to be sent to the Watch
     /// - Returns: WatchState containing current glucose readings and trends and determination infos for displaying cob and iob in the view
     func setupWatchState() async -> WatchState {
+        await buildWatchState(requiresReachableWatch: true)
+    }
+
+    /// Builds the watch state. The complication's updates are built while the watch app is in the background, so they
+    /// pass `requiresReachableWatch: false`.
+    private func buildWatchState(requiresReachableWatch: Bool) async -> WatchState {
         // Check if a watch is paired and reachable before doing expensive calculations
-        guard let session = session, session.isPaired, session.isReachable, session.isWatchAppInstalled else {
+        guard let session = session, session.isPaired, session.isReachable || !requiresReachableWatch,
+              session.isWatchAppInstalled
+        else {
             debug(.watchManager, "⌚️❌ Skipping setupWatchState - No Watch is paired or app not installed")
             return WatchState(date: Date())
         }
@@ -602,14 +616,6 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
             session.sendMessage([WatchMessageKeys.watchState: message], replyHandler: nil) { error in
                 debug(.watchManager, "❌ Error sending watch state: \(error)")
             }
-        } else if session.isComplicationEnabled, session.remainingComplicationUserInfoTransfers > 0,
-                  lastComplicationTransfer.map({ -$0.timeIntervalSinceNow >= 30 * 60 }) ?? true
-        {
-            // With the glucose complication on the watch face, this wakes the watch app to refresh it.
-            // Every 30 minutes stays within the daily limit; ordinary transfers fill the gaps.
-            session.transferCurrentComplicationUserInfo([WatchMessageKeys.watchState: message])
-            lastComplicationTransfer = Date()
-            debug(.watchManager, "📤 Transferred new WatchState snapshot as complication data")
         } else {
             session.transferUserInfo([WatchMessageKeys.watchState: message])
             debug(.watchManager, "📤 Transferred new WatchState snapshot via userInfo")
@@ -652,6 +658,54 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
         }
     }
 
+    /// Wakes the watch app with the latest reading for its glucose complication while the app is in the background.
+    /// watchOS allows about 50 of these a day: they're sent at most every 15 minutes, then every 30 once fewer than
+    /// 20 remain. Between them, the watch app fetches readings from Nightscout itself.
+    @MainActor private func sendComplicationUpdate() async {
+        guard let session, session.activationState == .activated, session.isComplicationEnabled else { return }
+        let remaining = session.remainingComplicationUserInfoTransfers
+        let interval: TimeInterval = (remaining >= 20 ? 15 : 30) * 60
+        guard remaining > 0, lastComplicationTransfer.map({ -$0.timeIntervalSinceNow >= interval }) ?? true else { return }
+        lastComplicationTransfer = Date()
+
+        updateComplicationContext()
+        var state = await buildWatchState(requiresReachableWatch: false)
+        state.date = Date()
+        session.transferCurrentComplicationUserInfo([WatchMessageKeys.watchState: watchStateToDictionary(from: state)])
+        debug(.watchManager, "📤 Transferred new WatchState snapshot as complication data, \(remaining - 1) left today")
+    }
+
+    /// Shares what the watch app needs to fetch readings from Nightscout for its complication: the site, the hashed
+    /// API secret Trio already uploads with, the glucose units and Trio's colour for each value.
+    private func updateComplicationContext() {
+        guard let session, session.activationState == .activated, session.isComplicationEnabled else { return }
+        let isDynamicColorScheme = glucoseColorScheme == .dynamicColor
+        var context: [String: Any] = [
+            WatchMessageKeys.units: units.rawValue,
+            WatchMessageKeys.glucoseColors: (39 ... 400).map { glucose in
+                Trio.getDynamicGlucoseColor(
+                    glucoseValue: Decimal(glucose),
+                    highGlucoseColorValue: isDynamicColorScheme ? Decimal(220) : highGlucose,
+                    lowGlucoseColorValue: isDynamicColorScheme ? Decimal(55) : lowGlucose,
+                    targetGlucose: currentGlucoseTarget,
+                    glucoseColorScheme: glucoseColorScheme
+                ).toHexString()
+            }
+        ]
+        if let url = keychain.getValue(String.self, forKey: NightscoutConfig.Config.urlKey), !url.isEmpty,
+           let secret = keychain.getValue(String.self, forKey: NightscoutConfig.Config.secretKey), !secret.isEmpty
+        {
+            context[WatchMessageKeys.nightscoutURL] = url
+            context[WatchMessageKeys.nightscoutSecretHash] = Insecure.SHA1.hash(data: Data(secret.utf8))
+                .map { String(format: "%02x", $0) }.joined()
+        }
+        do {
+            try session.updateApplicationContext(context)
+        } catch {
+            debug(.watchManager, "❌ Could not share complication settings with the watch: \(error.localizedDescription)")
+        }
+    }
+
     /// Answers the watch app's background request for the latest watch state, which keeps its complication fresh.
     /// Replying directly works while the watch app is in the background, unlike `sendDataToWatch`.
     func session(_: WCSession, didReceiveMessage message: [String: Any], replyHandler: @escaping ([String: Any]) -> Void) {
@@ -665,8 +719,9 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
                 replyHandler([:])
                 return
             }
-            var state = await self.setupWatchState()
+            var state = await self.buildWatchState(requiresReachableWatch: false)
             state.date = Date()
+            self.updateComplicationContext()
             replyHandler([WatchMessageKeys.watchState: self.watchStateToDictionary(from: state)])
         }
     }

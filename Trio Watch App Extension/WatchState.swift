@@ -452,43 +452,136 @@ import WidgetKit
 
     /// Shares the latest reading with the glucose complication and asks WidgetKit to redraw it.
     private func updateComplication() {
+        guard let readingDate = glucoseValues.last?.date else { return }
+        Self.saveComplicationReading(
+            glucose: currentGlucose,
+            trend: trend ?? "",
+            delta: delta ?? "",
+            colorHex: latestGlucoseColorString ?? "",
+            date: readingDate
+        )
+    }
+
+    /// Saves a reading for the complication, unless it already shows a newer one.
+    private static func saveComplicationReading(glucose: String, trend: String, delta: String, colorHex: String, date: Date) {
         guard let suiteName = Bundle.main.object(forInfoDictionaryKey: "AppGroupID") as? String,
               let defaults = UserDefaults(suiteName: suiteName),
-              let readingDate = glucoseValues.last?.date
+              date.timeIntervalSince1970 >= defaults.double(forKey: "complication.date")
         else { return }
 
-        defaults.set(currentGlucose, forKey: "complication.glucose")
-        defaults.set(trend ?? "", forKey: "complication.trend")
-        defaults.set(delta ?? "", forKey: "complication.delta")
-        defaults.set(latestGlucoseColorString ?? "", forKey: "complication.color")
-        defaults.set(readingDate.timeIntervalSince1970, forKey: "complication.date")
+        defaults.set(glucose, forKey: "complication.glucose")
+        defaults.set(trend, forKey: "complication.trend")
+        defaults.set(delta, forKey: "complication.delta")
+        defaults.set(colorHex, forKey: "complication.color")
+        defaults.set(date.timeIntervalSince1970, forKey: "complication.date")
         WidgetCenter.shared.reloadTimelines(ofKind: "TrioWatchComplication")
     }
 
-    /// Asks the phone for the latest watch state from a background refresh and applies the reply, which updates
-    /// the complication. Does nothing if the phone can't be reached.
-    func refreshFromPhone() async {
+    /// Gets the latest reading for the complication from a background refresh: from the phone when it can be reached,
+    /// otherwise straight from Nightscout, which works while the watch app is in the background.
+    func refreshComplication() async {
         // A background launch may still be activating the session.
         for _ in 0 ..< 20 where session?.activationState != .activated {
             try? await Task.sleep(for: .milliseconds(250))
         }
-        guard let session, session.activationState == .activated, session.isReachable else { return }
+        guard let session, session.activationState == .activated else { return }
 
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+        if session.isReachable, await requestComplicationUpdateFromPhone(session) {
+            return
+        }
+        await fetchComplicationReadingFromNightscout(context: session.receivedApplicationContext)
+    }
+
+    /// Asks the phone for the latest watch state and applies the reply. Returns whether the phone answered.
+    private func requestComplicationUpdateFromPhone(_ session: WCSession) async -> Bool {
+        let answered = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
             session.sendMessage(
                 [WatchMessageKeys.requestComplicationUpdate: true],
                 replyHandler: { reply in
                     self.handleIncomingWatchStatePayload(reply)
-                    continuation.resume()
+                    continuation.resume(returning: reply[WatchMessageKeys.watchState] != nil)
                 },
                 errorHandler: { error in
                     Task { await WatchLogger.shared.log("⌚️ Complication refresh request failed: \(error)") }
-                    continuation.resume()
+                    continuation.resume(returning: false)
                 }
             )
         }
         // Incoming data is applied after a short debounce; give it time to finish.
         try? await Task.sleep(for: .seconds(1))
+        return answered
+    }
+
+    /// Fetches the two latest readings from the Nightscout site Trio uploads to, using the site, hashed API secret,
+    /// units and colours the phone shares, and saves the newest for the complication.
+    private func fetchComplicationReadingFromNightscout(context: [String: Any]) async {
+        guard let site = context[WatchMessageKeys.nightscoutURL] as? String,
+              let secretHash = context[WatchMessageKeys.nightscoutSecretHash] as? String,
+              var components = URLComponents(string: site)
+        else { return }
+        components.path = "/api/v1/entries/sgv.json"
+        components.queryItems = [URLQueryItem(name: "count", value: "2")]
+        guard let url = components.url else { return }
+
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 20
+        request.addValue(secretHash, forHTTPHeaderField: "api-secret")
+
+        let entries: [[String: Any]]
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200,
+                  let decoded = try JSONSerialization.jsonObject(with: data) as? [[String: Any]]
+            else {
+                await WatchLogger.shared.log("⌚️ Nightscout returned no readings for the complication")
+                return
+            }
+            entries = decoded
+        } catch {
+            await WatchLogger.shared.log("⌚️ Nightscout fetch for the complication failed: \(error.localizedDescription)")
+            return
+        }
+
+        let readings = entries.compactMap { entry -> (date: Date, glucose: Int, direction: String)? in
+            guard let glucose = (entry["sgv"] as? NSNumber)?.intValue,
+                  let milliseconds = (entry["date"] as? NSNumber)?.doubleValue
+            else { return nil }
+            return (Date(timeIntervalSince1970: milliseconds / 1000), glucose, entry["direction"] as? String ?? "")
+        }
+        .sorted { $0.date > $1.date }
+        guard let latest = readings.first else { return }
+
+        let isMmolL = context[WatchMessageKeys.units] as? String == "mmol/L"
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.locale = .current
+        formatter.minimumFractionDigits = isMmolL ? 1 : 0
+        formatter.maximumFractionDigits = isMmolL ? 1 : 0
+        // Rounded to one decimal place, as Trio does.
+        let value = { (glucose: Int) -> Decimal in
+            guard isMmolL else { return Decimal(glucose) }
+            var exact = Decimal(glucose) * Decimal(string: "0.0555")!
+            var rounded = Decimal()
+            NSDecimalRound(&rounded, &exact, 1, .plain)
+            return rounded
+        }
+
+        var delta = ""
+        if readings.count > 1 {
+            let change = value(latest.glucose) - value(readings[1].glucose)
+            let formatted = formatter.string(from: change as NSNumber) ?? "0"
+            delta = change < 0 ? formatted : "+\(formatted)"
+        }
+        let colors = context[WatchMessageKeys.glucoseColors] as? [String] ?? []
+        let colorIndex = min(max(latest.glucose, 39), 400) - 39
+
+        Self.saveComplicationReading(
+            glucose: formatter.string(from: value(latest.glucose) as NSNumber) ?? "\(latest.glucose)",
+            trend: latest.direction,
+            delta: delta,
+            colorHex: colorIndex < colors.count ? colors[colorIndex] : "",
+            date: latest.date
+        )
     }
 
     /// Keeps a WatchConnectivity background task alive until the phone's queued data has been delivered and applied.

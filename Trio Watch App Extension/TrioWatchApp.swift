@@ -5,7 +5,7 @@ import WatchKit
 @main struct TrioWatchApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
-    /// Background refresh that fetches the latest reading from the phone for the complication.
+    /// Background refresh that fetches the latest reading for the complication, from the phone or Nightscout.
     private static let complicationRefresh = "complicationRefresh"
 
     init() {
@@ -45,7 +45,7 @@ import WatchKit
             await WatchState.shared.waitForPendingContent()
         }
         .backgroundTask(.appRefresh(Self.complicationRefresh)) {
-            await WatchState.shared.refreshFromPhone()
+            await WatchState.shared.refreshComplication()
             await MainActor.run { Self.scheduleComplicationRefresh() }
         }
     }

@@ -5,6 +5,11 @@ enum WatchMessageKeys {
     static let requestWatchUpdate = "requestWatchUpdate"
     /// Sent by the watch app from a background refresh; the phone replies with the latest watch state.
     static let requestComplicationUpdate = "requestComplicationUpdate"
+    /// Application context the phone shares so the watch app can fetch readings from Nightscout for its complication.
+    static let nightscoutURL = "nightscoutURL"
+    static let nightscoutSecretHash = "nightscoutSecretHash"
+    /// Trio's colour for each glucose value from 39 to 400 mg/dL, as hex strings.
+    static let glucoseColors = "glucoseColors"
     static let watchState = "watchState"
     static let acknowledged = "acknowledged"
     static let ackCode = "ackCode"
