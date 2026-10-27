@@ -9,6 +9,10 @@ struct TrioWatchComplicationEntry: TimelineEntry {
     let glucose: String?
     /// Raw trend of the latest reading, e.g. "Flat" or "FortyFiveUp".
     let trend: String?
+    /// Change from the previous reading as the watch app displays it, e.g. "+0.1".
+    let delta: String?
+    /// Trio's glucose colour for the latest reading, as a hex string.
+    let colorHex: String?
     let readingDate: Date?
 
     /// A reading older than this is shown as stale.
@@ -30,7 +34,24 @@ struct TrioWatchComplicationEntry: TimelineEntry {
         return minutes < 60 ? "\(minutes)m" : "\(minutes / 60)h"
     }
 
-    /// Angle of the trend arrow around the right side of the complication: 0° at 3 o'clock, -90° at 12.
+    var deltaText: String {
+        guard !isStale, let delta, delta != "--" else { return "" }
+        return delta
+    }
+
+    /// Colour of the trend dot: Trio's glucose colour, grey when there is none.
+    var dotColor: Color {
+        guard let colorHex, !colorHex.isEmpty else { return .gray }
+        var rgb: UInt64 = 0
+        Scanner(string: colorHex.replacingOccurrences(of: "#", with: "")).scanHexInt64(&rgb)
+        return Color(
+            red: Double((rgb & 0xFF0000) >> 16) / 255,
+            green: Double((rgb & 0x00FF00) >> 8) / 255,
+            blue: Double(rgb & 0x0000FF) / 255
+        )
+    }
+
+    /// Position of the trend dot around the right side of the ring: 0° at 3 o'clock, -90° at 12.
     var trendAngle: Double? {
         guard !isStale else { return nil }
         switch trend {
@@ -52,7 +73,14 @@ struct TrioWatchComplicationEntry: TimelineEntry {
 
 struct TrioWatchComplicationProvider: TimelineProvider {
     func placeholder(in _: Context) -> TrioWatchComplicationEntry {
-        TrioWatchComplicationEntry(date: Date(), glucose: "6.7", trend: "Flat", readingDate: Date())
+        TrioWatchComplicationEntry(
+            date: Date(),
+            glucose: "6.7",
+            trend: "Flat",
+            delta: "+0.1",
+            colorHex: "#4CD964",
+            readingDate: Date()
+        )
     }
 
     func getSnapshot(in context: Context, completion: @escaping (TrioWatchComplicationEntry) -> Void) {
@@ -80,13 +108,15 @@ struct TrioWatchComplicationProvider: TimelineProvider {
               let defaults = UserDefaults(suiteName: suiteName),
               let glucose = defaults.string(forKey: "complication.glucose")
         else {
-            return TrioWatchComplicationEntry(date: date, glucose: nil, trend: nil, readingDate: nil)
+            return TrioWatchComplicationEntry(date: date, glucose: nil, trend: nil, delta: nil, colorHex: nil, readingDate: nil)
         }
         let timestamp = defaults.double(forKey: "complication.date")
         return TrioWatchComplicationEntry(
             date: date,
             glucose: glucose,
             trend: defaults.string(forKey: "complication.trend"),
+            delta: defaults.string(forKey: "complication.delta"),
+            colorHex: defaults.string(forKey: "complication.color"),
             readingDate: timestamp > 0 ? Date(timeIntervalSince1970: timestamp) : nil
         )
     }
@@ -134,42 +164,41 @@ struct TrioWatchComplicationEntryView: View {
     }
 #endif
 
-/// Circular Complication: the reading in the centre, its age underneath, and the trend arrow
-/// travelling around the right-hand edge.
+/// Circular Complication: a ring the size of the system's ring complications, with the reading's age,
+/// value and change inside, and a dot in Trio's glucose colour that moves round the right of the ring
+/// to show the trend.
 struct TrioAccessoryCircularView: View {
     var entry: TrioWatchComplicationProvider.Entry
 
     var body: some View {
         GeometryReader { geometry in
             let size = min(geometry.size.width, geometry.size.height)
-            let circleDiameter = size * 0.74
-            let arrowWidth = size * 0.09
-            let accent: Color = entry.isStale ? .gray : .green
+            let ringWidth = size * 0.11
 
             ZStack {
                 Circle()
-                    .fill(Color.gray.opacity(0.3))
-                    .frame(width: circleDiameter, height: circleDiameter)
+                    .inset(by: ringWidth / 2)
+                    .stroke(Color.gray.opacity(0.35), lineWidth: ringWidth)
 
-                Text(entry.glucoseText)
-                    .font(.system(size: size * 0.3, weight: .bold))
-                    .minimumScaleFactor(0.5)
-                    .lineLimit(1)
-                    .foregroundStyle(entry.isStale ? .secondary : .primary)
-                    .frame(width: circleDiameter * 0.9)
-
-                Text(entry.ageText)
-                    .font(.system(size: size * 0.16, weight: .semibold))
-                    .foregroundStyle(accent)
-                    .offset(y: size * 0.21)
-                    .widgetAccentable()
+                VStack(spacing: 0) {
+                    Text(entry.ageText)
+                        .font(.system(size: size * 0.16, weight: .semibold))
+                    Text(entry.glucoseText)
+                        .font(.system(size: size * 0.34, weight: .bold))
+                        .foregroundStyle(entry.isStale ? .secondary : .primary)
+                    Text(entry.deltaText)
+                        .font(.system(size: size * 0.16, weight: .semibold))
+                }
+                .minimumScaleFactor(0.5)
+                .lineLimit(1)
+                .frame(width: size - ringWidth * 2.6)
 
                 if let angle = entry.trendAngle {
-                    TrendArrow()
-                        .fill(accent)
-                        .frame(width: arrowWidth, height: arrowWidth * 1.3)
-                        // Sit just outside the circle, then swing round its centre to the trend's position.
-                        .offset(x: circleDiameter / 2 + size * 0.03 + arrowWidth / 2)
+                    Circle()
+                        .fill(entry.dotColor)
+                        .frame(width: ringWidth, height: ringWidth)
+                        // Centre the dot on the ring, then swing it round to the trend's position.
+                        .offset(x: size / 2 - ringWidth / 2)
                         .rotationEffect(.degrees(angle))
                         .widgetAccentable()
                 }
@@ -177,18 +206,6 @@ struct TrioAccessoryCircularView: View {
             .frame(width: geometry.size.width, height: geometry.size.height)
         }
         .widgetBackground(backgroundView: Color.clear)
-    }
-}
-
-/// Triangle pointing right, rotated with its position around the complication.
-private struct TrendArrow: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
-        path.closeSubpath()
-        return path
     }
 }
 

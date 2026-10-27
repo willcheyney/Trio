@@ -24,6 +24,8 @@ import WidgetKit
     var trend: String? = ""
     var delta: String? = "--"
     var glucoseValues: [(date: Date, glucose: Double, color: Color)] = []
+    /// Trio's glucose colour for the newest reading, as a hex string, for the complication.
+    private var latestGlucoseColorString: String?
     var minYAxisValue: Decimal = 39
     var maxYAxisValue: Decimal = 200
     var cob: String? = "--"
@@ -457,6 +459,8 @@ import WidgetKit
 
         defaults.set(currentGlucose, forKey: "complication.glucose")
         defaults.set(trend ?? "", forKey: "complication.trend")
+        defaults.set(delta ?? "", forKey: "complication.delta")
+        defaults.set(latestGlucoseColorString ?? "", forKey: "complication.color")
         defaults.set(readingDate.timeIntervalSince1970, forKey: "complication.date")
         WidgetCenter.shared.reloadTimelines(ofKind: "TrioWatchComplication")
     }
@@ -528,6 +532,8 @@ import WidgetKit
                 )
             }
             .sorted { $0.date < $1.date }
+            latestGlucoseColorString = glucoseData
+                .max { ($0["date"] as? TimeInterval ?? 0) < ($1["date"] as? TimeInterval ?? 0) }?["color"] as? String
         }
 
         updateComplication()
