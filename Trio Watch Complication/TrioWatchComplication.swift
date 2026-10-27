@@ -192,7 +192,7 @@ struct TrioAccessoryCircularView: View {
                 Text(entry.ageText)
                     .font(.system(size: size * 0.14, weight: .medium, design: .rounded))
                     .foregroundStyle(.white)
-                    .offset(y: -size * 0.236)
+                    .offset(y: -size * 0.25)
 
                 Text(entry.glucoseText)
                     .font(.system(size: size * 0.36, weight: .medium, design: .rounded))
@@ -205,7 +205,7 @@ struct TrioAccessoryCircularView: View {
                 Text(entry.deltaText)
                     .font(.system(size: size * 0.14, weight: .medium, design: .rounded))
                     .foregroundStyle(.white)
-                    .offset(y: size * 0.264)
+                    .offset(y: size * 0.25)
 
                 if let angle = entry.trendAngle {
                     Circle()
