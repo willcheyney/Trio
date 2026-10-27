@@ -192,7 +192,7 @@ struct GlucoseWidgetView: View {
             AccessoryWidgetBackground()
             VStack(spacing: -2) {
                 Text(display.glucose)
-                    .font(.system(size: 20, weight: .semibold, design: .rounded))
+                    .font(.system(size: 20, weight: .semibold))
                     .minimumScaleFactor(0.5)
                     .foregroundStyle(display.isStale ? .secondary : .primary)
                 Text(display.isStale ? display.ageText : display.direction)
@@ -208,7 +208,7 @@ struct GlucoseWidgetView: View {
             VStack(alignment: .leading, spacing: -2) {
                 HStack(alignment: .center, spacing: 2) {
                     Text(display.glucose)
-                        .font(.system(size: 44, weight: .bold, design: .rounded))
+                        .font(.system(size: 44, weight: .bold))
                         .foregroundStyle(display.isStale ? .secondary : .primary)
                     Text(display.direction)
                         .font(.system(size: 26, weight: .semibold))
@@ -231,7 +231,7 @@ struct GlucoseWidgetView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     HStack(alignment: .center, spacing: 3) {
                         Text(display.glucose)
-                            .font(.system(size: 34, weight: .bold, design: .rounded))
+                            .font(.system(size: 34, weight: .bold))
                             .foregroundStyle(display.glucoseColor)
                         Text(display.direction)
                             .font(.system(size: 20, weight: .semibold))
