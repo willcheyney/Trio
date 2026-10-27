@@ -299,34 +299,18 @@ private struct GlucoseWidgetChart: View {
         let capTime = plotWidth > 0
             ? readings.upperBound.timeIntervalSince(readings.lowerBound) * Double(Self.lineWidth / 2 / plotWidth)
             : 0
-        let capAreas = [points.first, points.last].compactMap { $0 }.enumerated().map { index, point in
-            (series: "cap\(index)", value: point.value, dates: index == 0
-                ? [point.date.addingTimeInterval(-capTime), point.date]
-                : [point.date, point.date.addingTimeInterval(capTime)])
-        }
+        let areaPoints = extended(points, by: capTime)
 
         return Chart {
             if showsArea {
-                ForEach(points, id: \.date) { point in
+                ForEach(areaPoints, id: \.date) { point in
                     AreaMark(
                         x: .value("Time", point.date),
                         yStart: .value("Floor", lowerBound),
-                        yEnd: .value("Glucose", point.value),
-                        series: .value("Part", "readings")
+                        yEnd: .value("Glucose", point.value)
                     )
                     .foregroundStyle(areaStyle)
                     .interpolationMethod(.monotone)
-                }
-                ForEach(capAreas, id: \.series) { cap in
-                    ForEach(cap.dates, id: \.self) { date in
-                        AreaMark(
-                            x: .value("Time", date),
-                            yStart: .value("Floor", lowerBound),
-                            yEnd: .value("Glucose", cap.value),
-                            series: .value("Part", cap.series)
-                        )
-                        .foregroundStyle(areaStyle)
-                    }
                 }
             }
             ForEach(points, id: \.date) { point in
@@ -385,6 +369,18 @@ private struct GlucoseWidgetChart: View {
             style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, dash: [max(0, segment - lineWidth), segment + lineWidth])
         )
         .frame(width: width, height: lineWidth)
+    }
+
+    /// The readings with a point added `time` beyond each end, continuing the line's direction, so the shading is
+    /// one piece that reaches under the line's round caps while following the same curve.
+    private func extended(_ points: [(date: Date, value: Double)], by time: TimeInterval) -> [(date: Date, value: Double)] {
+        guard time > 0, points.count > 1 else { return points }
+        let first = points[0], second = points[1]
+        let last = points[points.count - 1], beforeLast = points[points.count - 2]
+        let startSlope = (second.value - first.value) / second.date.timeIntervalSince(first.date)
+        let endSlope = (last.value - beforeLast.value) / last.date.timeIntervalSince(beforeLast.date)
+        return [(first.date.addingTimeInterval(-time), first.value - startSlope * time)] + points +
+            [(last.date.addingTimeInterval(time), last.value + endSlope * time)]
     }
 
     /// From the oldest to the newest reading shown; the last hour when there are fewer than two.
