@@ -176,11 +176,14 @@ struct TrioAccessoryCircularView: View {
             let ringWidth = size * 0.1073
             let dotDiameter = size * 0.13
             let dotOutline = size * 0.028
+            // As in Apple's gauge complications, the ring sits just inside the edge so the dot, which is wider than
+            // the ring, can be centred on it without watchOS clipping its outline at the complication's edge.
+            let ringInset = dotDiameter / 2 + dotOutline / 2
             let ringColor = entry.isStale ? Color.gray : entry.dotColor
 
             ZStack {
                 Circle()
-                    .inset(by: ringWidth / 2)
+                    .inset(by: ringInset)
                     .stroke(ringColor.opacity(0.22), lineWidth: ringWidth)
 
                 Text(entry.ageText)
@@ -206,10 +209,8 @@ struct TrioAccessoryCircularView: View {
                         .fill(entry.dotColor)
                         .overlay(Circle().stroke(Color.black, lineWidth: dotOutline))
                         .frame(width: dotDiameter, height: dotDiameter)
-                        // The dot is wider than the ring, so centring it on the ring would push its outline past the
-                        // complication's edge, where watchOS clips it. Sit it just inside the edge instead, then swing
-                        // it round to the trend's position.
-                        .offset(x: size / 2 - dotDiameter / 2 - dotOutline / 2)
+                        // Centre the dot on the ring, then swing it round to the trend's position.
+                        .offset(x: size / 2 - ringInset)
                         .rotationEffect(.degrees(angle))
                         .widgetAccentable()
                 }
