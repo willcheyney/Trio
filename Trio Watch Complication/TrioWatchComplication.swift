@@ -152,8 +152,11 @@ struct TrioWatchComplicationEntryView: View {
         var entry: TrioWatchComplicationProvider.Entry
 
         var body: some View {
+            // No explicit size: watchOS gives corner content its own large size, the same one Apple's battery and
+            // temperature corners use, so the reading balances with them.
             Text(entry.glucoseText)
-                .font(.system(.title3, design: .rounded).weight(.semibold))
+                .fontDesign(.rounded)
+                .fontWeight(.semibold)
                 .foregroundStyle(entry.isStale ? .secondary : .primary)
                 .widgetCurvesContent()
                 .widgetLabel {
