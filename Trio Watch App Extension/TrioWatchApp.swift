@@ -12,11 +12,11 @@ import WatchKit
         WatchNotificationHandler.shared.configure()
         // Activate WatchConnectivity at launch, including background launches for the complication.
         _ = WatchState.shared
-        Self.scheduleComplicationRefresh()
     }
 
     /// Asks watchOS to wake the app in about 15 minutes. With the complication on the active face, watchOS
-    /// allows up to four of these an hour.
+    /// allows up to four of these an hour. Only call this once the app has launched: during `init` SwiftUI has not
+    /// yet set up background task handling, and watchOS terminates the app.
     private static func scheduleComplicationRefresh() {
         WKApplication.shared().scheduleBackgroundRefresh(
             withPreferredDate: Date().addingTimeInterval(15 * 60),
@@ -31,9 +31,11 @@ import WatchKit
     var body: some Scene {
         WindowGroup {
             TrioMainWatchView()
+                .onAppear { Self.scheduleComplicationRefresh() }
         }
         .onChange(of: scenePhase) { _, newScenePhase in
             if newScenePhase == .background {
+                Self.scheduleComplicationRefresh()
                 Task {
                     await WatchLogger.shared.flushPersistedLogs()
                 }
