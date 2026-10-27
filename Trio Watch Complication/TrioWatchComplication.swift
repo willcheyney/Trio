@@ -153,7 +153,7 @@ struct TrioWatchComplicationEntryView: View {
 
         var body: some View {
             Text(entry.glucoseText)
-                .font(.title3.weight(.semibold))
+                .font(.system(.title3, design: .rounded).weight(.semibold))
                 .foregroundStyle(entry.isStale ? .secondary : .primary)
                 .widgetCurvesContent()
                 .widgetLabel {
@@ -182,12 +182,12 @@ struct TrioAccessoryCircularView: View {
 
                 VStack(spacing: 0) {
                     Text(entry.ageText)
-                        .font(.system(size: size * 0.16, weight: .semibold))
+                        .font(.system(size: size * 0.16, weight: .semibold, design: .rounded))
                     Text(entry.glucoseText)
-                        .font(.system(size: size * 0.34, weight: .bold))
+                        .font(.system(size: size * 0.34, weight: .bold, design: .rounded))
                         .foregroundStyle(entry.isStale ? .secondary : .primary)
                     Text(entry.deltaText)
-                        .font(.system(size: size * 0.16, weight: .semibold))
+                        .font(.system(size: size * 0.16, weight: .semibold, design: .rounded))
                 }
                 .minimumScaleFactor(0.5)
                 .lineLimit(1)
