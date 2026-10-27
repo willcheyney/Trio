@@ -175,6 +175,7 @@ struct TrioAccessoryCircularView: View {
             let size = min(geometry.size.width, geometry.size.height)
             let ringWidth = size * 0.1073
             let dotDiameter = size * 0.13
+            let dotOutline = size * 0.028
             let ringColor = entry.isStale ? Color.gray : entry.dotColor
 
             ZStack {
@@ -203,10 +204,12 @@ struct TrioAccessoryCircularView: View {
                 if let angle = entry.trendAngle {
                     Circle()
                         .fill(entry.dotColor)
-                        .overlay(Circle().stroke(Color.black, lineWidth: size * 0.028))
+                        .overlay(Circle().stroke(Color.black, lineWidth: dotOutline))
                         .frame(width: dotDiameter, height: dotDiameter)
-                        // Centre the dot on the ring, then swing it round to the trend's position.
-                        .offset(x: size / 2 - ringWidth / 2)
+                        // The dot is wider than the ring, so centring it on the ring would push its outline past the
+                        // complication's edge, where watchOS clips it. Sit it just inside the edge instead, then swing
+                        // it round to the trend's position.
+                        .offset(x: size / 2 - dotDiameter / 2 - dotOutline / 2)
                         .rotationEffect(.degrees(angle))
                         .widgetAccentable()
                 }
