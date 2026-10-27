@@ -239,6 +239,8 @@ struct GlucoseWidgetView: View {
                     }
                     .minimumScaleFactor(0.6)
                     .lineLimit(1)
+                    // The line box leaves about 7pt above the digits; pull them up so the top margin matches the left.
+                    .padding(.top, -7)
                     Text(display.delta.isEmpty ? display.ageText : "\(display.delta) · \(display.ageText)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
