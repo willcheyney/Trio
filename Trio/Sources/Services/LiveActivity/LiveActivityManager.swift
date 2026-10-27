@@ -448,14 +448,14 @@ final class LiveActivityData: ObservableObject {
             readings: glucose.filter { $0.date > threeHoursAgo }
                 .map { GlucoseWidgetSnapshot.Reading(date: $0.date, glucose: $0.glucose) },
             direction: latest.direction?.symbol,
-            unit: settings.units.rawValue,
-            low: settings.low,
-            high: settings.high
+            unit: settings.units.rawValue
         )
         guard snapshot != previous else { return }
         snapshot.save()
 
-        let isInRange = { (glucose: Int) in Decimal(glucose) > self.settings.low && Decimal(glucose) < self.settings.high }
+        let isInRange = { (glucose: Int) in
+            (GlucoseWidgetSnapshot.lowLimitMgdL ... GlucoseWidgetSnapshot.highLimitMgdL).contains(Double(glucose))
+        }
         let rangeChanged = previous?.readings.first.map { isInRange($0.glucose) != isInRange(latest.glucose) } ?? true
         let isForeground = UIApplication.shared.applicationState == .active
         let reloadDue = lastBackgroundWidgetReload.map { -$0.timeIntervalSinceNow >= 10 * 60 } ?? true

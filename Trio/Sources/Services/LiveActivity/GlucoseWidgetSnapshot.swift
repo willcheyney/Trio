@@ -17,12 +17,16 @@ struct GlucoseWidgetSnapshot: Codable, Equatable {
     let direction: String?
     /// "mg/dL" or "mmol/L".
     let unit: String
-    /// The user's low and high glucose limits, in mg/dL.
-    let low: Decimal
-    let high: Decimal
 
     /// WidgetKit kind of the glucose widget, used to reload its timelines.
     static let kind = "TrioGlucoseWidget"
+
+    /// The widget's own in-range limits: readings below 3.8 or above 10.0 mmol/L are out of range.
+    /// Kept separate from Trio's low/high settings, which also drive its statistics and glucose alarms.
+    static let lowLimitMmolL = 3.8
+    static let highLimitMmolL = 10.0
+    static let lowLimitMgdL = 68.0
+    static let highLimitMgdL = 180.0
 
     private static let defaultsKey = "glucoseWidgetSnapshot"
 

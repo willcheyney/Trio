@@ -115,14 +115,14 @@ private struct GlucoseWidgetDisplay {
     /// Colour of the reading: the static Trio colours for low and high, primary in range.
     var glucoseColor: Color {
         if isStale { return .secondary }
-        if Decimal(latest.glucose) <= snapshot.low { return .staticLow }
-        if Decimal(latest.glucose) >= snapshot.high { return .staticHigh }
+        if displayValue(latest.glucose) < lowLine { return .staticLow }
+        if displayValue(latest.glucose) > highLine { return .staticHigh }
         return .primary
     }
 
-    /// Whether the latest reading is between the low and high limits.
+    /// Whether the latest reading, as displayed, is within the widget's limits.
     var isInRange: Bool {
-        Decimal(latest.glucose) > snapshot.low && Decimal(latest.glucose) < snapshot.high
+        (lowLine ... highLine).contains(displayValue(latest.glucose))
     }
 
     /// Readings from the last hour, converted to the display unit, oldest first.
@@ -131,8 +131,8 @@ private struct GlucoseWidgetDisplay {
         return snapshot.readings.filter { $0.date >= start }.reversed().map { ($0.date, displayValue($0.glucose)) }
     }
 
-    var lowLine: Double { displayValue(snapshot.low) }
-    var highLine: Double { displayValue(snapshot.high) }
+    var lowLine: Double { isMgdL ? GlucoseWidgetSnapshot.lowLimitMgdL : GlucoseWidgetSnapshot.lowLimitMmolL }
+    var highLine: Double { isMgdL ? GlucoseWidgetSnapshot.highLimitMgdL : GlucoseWidgetSnapshot.highLimitMmolL }
 
     func displayValue(_ mgdL: Int) -> Double {
         displayValue(Decimal(mgdL))
@@ -204,21 +204,22 @@ struct GlucoseWidgetView: View {
     }
 
     private func rectangular(_ display: GlucoseWidgetDisplay) -> some View {
-        HStack(spacing: 6) {
-            VStack(alignment: .leading, spacing: 0) {
+        HStack(spacing: 4) {
+            VStack(alignment: .leading, spacing: -2) {
                 HStack(alignment: .center, spacing: 2) {
                     Text(display.glucose)
-                        .font(.system(size: 26, weight: .semibold, design: .rounded))
+                        .font(.system(size: 44, weight: .bold, design: .rounded))
                         .foregroundStyle(display.isStale ? .secondary : .primary)
                     Text(display.direction)
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.system(size: 26, weight: .semibold))
                 }
-                .minimumScaleFactor(0.6)
+                .minimumScaleFactor(0.5)
                 .lineLimit(1)
                 Text(display.delta.isEmpty ? display.ageText : "\(display.delta) · \(display.ageText)")
-                    .font(.caption2)
+                    .font(.system(size: 12, weight: .medium))
                     .lineLimit(1)
             }
+            .frame(maxHeight: .infinity)
             .layoutPriority(1)
             GlucoseWidgetChart(display: display, showsArea: false)
         }
@@ -245,8 +246,12 @@ struct GlucoseWidgetView: View {
                 }
                 Spacer(minLength: 0)
                 Button(intent: RefreshGlucoseWidgetIntent()) {
+                    // Fixed icon size, so StandBy's larger text settings can't overflow the button.
                     Image(systemName: "arrow.clockwise")
-                        .font(.caption.weight(.semibold))
+                        .resizable()
+                        .fontWeight(.semibold)
+                        .scaledToFit()
+                        .frame(width: 11, height: 11)
                         .foregroundStyle(.primary)
                         .frame(width: 30, height: 22)
                         .background(Capsule().fill(Color.primary.opacity(0.16)))
@@ -272,12 +277,13 @@ private struct GlucoseWidgetChart: View {
         // The whole chart is green while the latest reading is in range, red when it is outside the limits.
         let chartColor: Color = display.isInRange ? .green : .red
 
+        // Explicit grey: a chart's `.secondary` is a shade of its accent colour, which drew these lines blue.
         Chart {
             RuleMark(y: .value("High", display.highLine))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.gray)
                 .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
             RuleMark(y: .value("Low", display.lowLine))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.gray)
                 .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
 
             ForEach(points, id: \.date) { point in
@@ -312,6 +318,7 @@ private struct GlucoseWidgetChart: View {
                         if let number = value.as(Double.self) {
                             Text(display.isMgdL ? "\(Int(number))" : String(format: "%.1f", number))
                                 .font(.system(size: 8))
+                                .foregroundStyle(Color.gray)
                         }
                     }
                 }
@@ -331,9 +338,7 @@ extension GlucoseWidgetSnapshot {
                 Reading(date: now.addingTimeInterval(Double(-$0.offset) * 5 * 60), glucose: $0.element)
             },
             direction: "→",
-            unit: GlucoseUnits.mmolL.rawValue,
-            low: 70,
-            high: 180
+            unit: GlucoseUnits.mmolL.rawValue
         )
     }
 }
