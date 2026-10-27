@@ -330,7 +330,7 @@ private struct GlucoseWidgetChart: View {
                         if let number = value.as(Double.self) {
                             Text(display.isMgdL ? "\(Int(number))" : String(format: "%.1f", number))
                                 .font(.system(size: 8))
-                                .foregroundStyle(Color.gray)
+                                .foregroundStyle(Color.gray.opacity(0.6))
                         }
                     }
                 }
@@ -353,7 +353,8 @@ private struct GlucoseWidgetChart: View {
         .widgetAccentable()
     }
 
-    /// A grey dashed line with round-ended dashes of equal length, the first and last flush with each end.
+    /// A faint grey dashed line, kept in the background behind the glucose line, with round-ended dashes of
+    /// equal length, the first and last flush with each end.
     private func limitLine(width: CGFloat) -> some View {
         let lineWidth = Self.limitLineWidth
         // An odd number of equal segments, dash first and last, each about 3 pt long.
@@ -365,7 +366,7 @@ private struct GlucoseWidgetChart: View {
         }
         // Round caps add half the line width to each end of a dash, so shorten the dashes and lengthen the gaps by that.
         .stroke(
-            Color.gray,
+            Color.gray.opacity(0.45),
             style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, dash: [max(0, segment - lineWidth), segment + lineWidth])
         )
         .frame(width: width, height: lineWidth)
