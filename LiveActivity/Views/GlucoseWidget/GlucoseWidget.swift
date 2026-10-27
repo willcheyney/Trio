@@ -208,7 +208,7 @@ struct GlucoseWidgetView: View {
             VStack(alignment: .leading, spacing: -2) {
                 HStack(alignment: .center, spacing: 2) {
                     Text(display.glucose)
-                        .font(.system(size: 44, weight: .bold))
+                        .font(.system(size: 44, weight: .semibold))
                         .foregroundStyle(display.isStale ? .secondary : .primary)
                     Text(display.direction)
                         .font(.system(size: 26, weight: .semibold))
@@ -268,7 +268,18 @@ private struct GlucoseWidgetChart: View {
     let display: GlucoseWidgetDisplay
     let showsArea: Bool
 
+    private static let lineWidth: CGFloat = 2
+    private static let limitLineWidth: CGFloat = 1
+    /// Approximate width of the trailing limit labels, used to estimate the plot width.
+    private static let labelWidth: CGFloat = 18
+
     var body: some View {
+        GeometryReader { geometry in
+            chart(plotWidth: geometry.size.width - (showsArea ? Self.labelWidth : 0))
+        }
+    }
+
+    private func chart(plotWidth: CGFloat) -> some View {
         let points = display.chartPoints
         let values = points.map(\.value) + [display.lowLine, display.highLine]
         let lowerBound = (values.min() ?? 0) * 0.9
@@ -276,41 +287,56 @@ private struct GlucoseWidgetChart: View {
 
         // The whole chart is green while the latest reading is in range, red when it is outside the limits.
         let chartColor: Color = display.isInRange ? .green : .red
+        let areaStyle = LinearGradient(
+            colors: [chartColor.opacity(0.4), chartColor.opacity(0.02)],
+            startPoint: .top,
+            endPoint: .bottom
+        )
 
-        // Explicit grey: a chart's `.secondary` is a shade of its accent colour, which drew these lines blue.
-        Chart {
-            RuleMark(y: .value("High", display.highLine))
-                .foregroundStyle(Color.gray)
-                .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
-            RuleMark(y: .value("Low", display.lowLine))
-                .foregroundStyle(Color.gray)
-                .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+        // The line's round caps reach half its width past the first and last readings. Widen the x-axis by that
+        // much and carry the shading out to the same place, so the line spans the full width without overhanging it.
+        let readings = xDomain(points)
+        let capTime = plotWidth > 0
+            ? readings.upperBound.timeIntervalSince(readings.lowerBound) * Double(Self.lineWidth / 2 / plotWidth)
+            : 0
+        let capAreas = [points.first, points.last].compactMap { $0 }.enumerated().map { index, point in
+            (series: "cap\(index)", value: point.value, dates: index == 0
+                ? [point.date.addingTimeInterval(-capTime), point.date]
+                : [point.date, point.date.addingTimeInterval(capTime)])
+        }
 
-            ForEach(points, id: \.date) { point in
-                if showsArea {
+        return Chart {
+            if showsArea {
+                ForEach(points, id: \.date) { point in
                     AreaMark(
                         x: .value("Time", point.date),
                         yStart: .value("Floor", lowerBound),
-                        yEnd: .value("Glucose", point.value)
+                        yEnd: .value("Glucose", point.value),
+                        series: .value("Part", "readings")
                     )
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [chartColor.opacity(0.4), chartColor.opacity(0.02)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
+                    .foregroundStyle(areaStyle)
                     .interpolationMethod(.monotone)
                 }
+                ForEach(capAreas, id: \.series) { cap in
+                    ForEach(cap.dates, id: \.self) { date in
+                        AreaMark(
+                            x: .value("Time", date),
+                            yStart: .value("Floor", lowerBound),
+                            yEnd: .value("Glucose", cap.value),
+                            series: .value("Part", cap.series)
+                        )
+                        .foregroundStyle(areaStyle)
+                    }
+                }
+            }
+            ForEach(points, id: \.date) { point in
                 LineMark(x: .value("Time", point.date), y: .value("Glucose", point.value))
                     .foregroundStyle(chartColor)
-                    // Square ends, so the line stops exactly where the shading does.
-                    .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .butt, lineJoin: .round))
+                    .lineStyle(StrokeStyle(lineWidth: Self.lineWidth, lineCap: .round, lineJoin: .round))
                     .interpolationMethod(.monotone)
             }
         }
-        // Span the readings themselves, so the line and shading run the full width of the dashed lines.
-        .chartXScale(domain: xDomain(points))
+        .chartXScale(domain: readings.lowerBound.addingTimeInterval(-capTime) ... readings.upperBound.addingTimeInterval(capTime))
         .chartYScale(domain: lowerBound ... upperBound)
         .chartXAxis(.hidden)
         .chartYAxis {
@@ -326,7 +352,39 @@ private struct GlucoseWidgetChart: View {
                 }
             }
         }
+        .chartBackground { proxy in
+            // Drawn here rather than as rule marks, so the dashes can be sized to divide the plot width evenly.
+            GeometryReader { geometry in
+                if let plotFrame = proxy.plotFrame {
+                    let frame = geometry[plotFrame]
+                    ForEach([display.highLine, display.lowLine], id: \.self) { value in
+                        if let y = proxy.position(forY: value) {
+                            limitLine(width: frame.width)
+                                .position(x: frame.midX, y: frame.minY + y)
+                        }
+                    }
+                }
+            }
+        }
         .widgetAccentable()
+    }
+
+    /// A grey dashed line with round-ended dashes of equal length, the first and last flush with each end.
+    private func limitLine(width: CGFloat) -> some View {
+        let lineWidth = Self.limitLineWidth
+        // An odd number of equal segments, dash first and last, each about 3 pt long.
+        let dashCount = max(1, Int(((width + 3) / 6).rounded()))
+        let segment = width / CGFloat(2 * dashCount - 1)
+        return Path { path in
+            path.move(to: CGPoint(x: lineWidth / 2, y: lineWidth / 2))
+            path.addLine(to: CGPoint(x: width - lineWidth / 2, y: lineWidth / 2))
+        }
+        // Round caps add half the line width to each end of a dash, so shorten the dashes and lengthen the gaps by that.
+        .stroke(
+            Color.gray,
+            style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, dash: [max(0, segment - lineWidth), segment + lineWidth])
+        )
+        .frame(width: width, height: lineWidth)
     }
 
     /// From the oldest to the newest reading shown; the last hour when there are fewer than two.
