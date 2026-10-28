@@ -211,7 +211,7 @@ struct GlucoseWidgetView: View {
             VStack(alignment: .leading, spacing: -2) {
                 HStack(alignment: .center, spacing: 2) {
                     Text(display.glucose)
-                        .font(.system(size: 44, weight: .regular))
+                        .font(.system(size: 44, weight: .medium))
                         .foregroundStyle(display.isStale ? .secondary : .primary)
                     Text(display.direction)
                         .font(.system(size: 26, weight: .semibold))
