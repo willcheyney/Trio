@@ -150,6 +150,8 @@ private struct GlucoseWidgetDisplay {
 struct GlucoseWidgetView: View {
     @Environment(\.widgetFamily) private var family
     @Environment(\.widgetRenderingMode) private var renderingMode
+    /// False in StandBy, where the widget sits beside the clock without its background.
+    @Environment(\.showsWidgetContainerBackground) private var showsBackground
     let entry: GlucoseWidgetEntry
 
     var body: some View {
@@ -226,10 +228,10 @@ struct GlucoseWidgetView: View {
         }
     }
 
-    /// StandBy's night mode tints the widget red and sets brightness from each colour's lightness, so the low and
-    /// high colours would come out dimmer than the clock. There the reading is white, as bright as the clock.
+    /// StandBy's night mode tints the widget red and sets brightness from each colour's lightness, so colours and
+    /// greys come out dimmer than the clock. There the reading is white, as bright as the clock, even when stale.
     private func readingColor(_ display: GlucoseWidgetDisplay) -> Color {
-        renderingMode == .vibrant && !display.isStale ? .white : display.glucoseColor
+        renderingMode == .vibrant ? .white : display.glucoseColor
     }
 
     private func small(_ display: GlucoseWidgetDisplay) -> some View {
@@ -250,7 +252,9 @@ struct GlucoseWidgetView: View {
                     .padding(.top, -7)
                     Text(display.delta.isEmpty ? display.ageText : "\(display.delta) · \(display.ageText)")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(
+                            renderingMode == .vibrant ? AnyShapeStyle(Color.white.opacity(0.8)) : AnyShapeStyle(.secondary)
+                        )
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)
@@ -269,13 +273,20 @@ struct GlucoseWidgetView: View {
             }
             GlucoseWidgetChart(display: display, showsArea: true)
         }
+        // In StandBy, inset the top and bottom to line up with the clock beside it.
+        .padding(.vertical, showsBackground ? 0 : 6)
     }
 }
 
 /// Line chart of the last hour, with the low and high limits as dashed lines.
 private struct GlucoseWidgetChart: View {
+    @Environment(\.widgetRenderingMode) private var renderingMode
     let display: GlucoseWidgetDisplay
     let showsArea: Bool
+
+    /// StandBy's night mode turns everything red and sets brightness from lightness, so there the chart is drawn in
+    /// white and the limits in lighter greys, to stay as clear as the clock.
+    private var isNightMode: Bool { renderingMode == .vibrant }
 
     private static let lineWidth: CGFloat = 2
     private static let limitLineWidth: CGFloat = 1
@@ -295,7 +306,7 @@ private struct GlucoseWidgetChart: View {
         let upperBound = (values.max() ?? 0) * 1.05
 
         // The whole chart is green while the latest reading is in range, red when it is outside the limits.
-        let chartColor: Color = display.isInRange ? .green : .red
+        let chartColor: Color = isNightMode ? .white : display.isInRange ? .green : .red
         let areaStyle = LinearGradient(
             colors: [chartColor.opacity(0.4), chartColor.opacity(0.02)],
             startPoint: .top,
@@ -339,7 +350,7 @@ private struct GlucoseWidgetChart: View {
                         if let number = value.as(Double.self) {
                             Text(display.isMgdL ? "\(Int(number))" : String(format: "%.1f", number))
                                 .font(.system(size: 8))
-                                .foregroundStyle(Color.gray.opacity(0.6))
+                                .foregroundStyle(isNightMode ? Color.white.opacity(0.7) : Color.gray.opacity(0.6))
                         }
                     }
                 }
@@ -375,7 +386,7 @@ private struct GlucoseWidgetChart: View {
         }
         // Round caps add half the line width to each end of a dash, so shorten the dashes and lengthen the gaps by that.
         .stroke(
-            Color.gray.opacity(0.45),
+            isNightMode ? Color.white.opacity(0.55) : Color.gray.opacity(0.45),
             style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, dash: [max(0, segment - lineWidth), segment + lineWidth])
         )
         .frame(width: width, height: lineWidth)
