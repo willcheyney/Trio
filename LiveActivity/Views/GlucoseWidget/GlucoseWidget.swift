@@ -112,6 +112,14 @@ private struct GlucoseWidgetDisplay {
         return "\(minutes / 60)h ago"
     }
 
+    /// Trio's eventual glucose, e.g. "6.2"; empty when its last loop is more than 15 minutes old.
+    var eventualGlucose: String {
+        guard let glucose = snapshot.eventualGlucose, let loopDate = snapshot.eventualGlucoseDate,
+              date.timeIntervalSince(loopDate) < Self.staleAfter
+        else { return "" }
+        return format(glucose)
+    }
+
     /// The reading's age without "ago", e.g. "2m".
     var shortAgeText: String {
         let minutes = Int(age / 60)
@@ -215,7 +223,7 @@ struct GlucoseWidgetView: View {
     }
 
     /// Reading, trend and unit on the top line with the change on the right, the last hour's chart over the
-    /// target limits below, and the reading's age underneath.
+    /// target limits below, and the reading's age and Trio's eventual glucose underneath.
     private func rectangular(_ display: GlucoseWidgetDisplay) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
@@ -239,11 +247,21 @@ struct GlucoseWidgetView: View {
             // margins match the sides.
             .padding(.top, -6)
             GlucoseWidgetChart(display: display, showsArea: false)
-            Text(display.shortAgeText)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .padding(.bottom, -2.75)
+            HStack(spacing: 3) {
+                Text(display.shortAgeText)
+                Spacer(minLength: 0)
+                if !display.eventualGlucose.isEmpty {
+                    // The same arrow and value Trio's home screen shows for its eventual glucose.
+                    Image(systemName: "arrow.right.circle")
+                        .font(.system(size: 9.5, weight: .medium))
+                    Text(display.eventualGlucose)
+                }
+            }
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            // The forecast's icon is centred on the digits but a little taller, so it sets the bottom edge when shown.
+            .padding(.bottom, display.eventualGlucose.isEmpty ? -2.75 : -1.75)
         }
     }
 
@@ -442,7 +460,9 @@ extension GlucoseWidgetSnapshot {
                 Reading(date: now.addingTimeInterval(Double(-$0.offset) * 5 * 60), glucose: $0.element)
             },
             direction: "→",
-            unit: GlucoseUnits.mmolL.rawValue
+            unit: GlucoseUnits.mmolL.rawValue,
+            eventualGlucose: 112,
+            eventualGlucoseDate: now
         )
     }
 }
