@@ -235,8 +235,9 @@ struct GlucoseWidgetView: View {
             }
             .lineLimit(1)
             .minimumScaleFactor(0.6)
-            // Trim the space the line box leaves above the digits, so the top margin matches the sides.
-            .padding(.top, -7.5)
+            // Trim most of the space the line box leaves above the digits. What remains matches the gap the text
+            // keeps to the sides, which measured about 28px on a 3x lock screen.
+            .padding(.top, -5.75)
             GlucoseWidgetChart(display: display, showsArea: false)
         }
     }
