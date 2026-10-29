@@ -215,7 +215,7 @@ struct GlucoseWidgetView: View {
     }
 
     /// Reading, trend and unit on the top line with the change on the right, the last hour's chart over the
-    /// target range below, and the reading's age underneath.
+    /// target limits below, and the reading's age underneath.
     private func rectangular(_ display: GlucoseWidgetDisplay) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
@@ -235,11 +235,15 @@ struct GlucoseWidgetView: View {
             }
             .lineLimit(1)
             .minimumScaleFactor(0.6)
-            GlucoseWidgetChart(display: display, showsArea: false, showsRangeBand: true)
+            // Trim the space the line boxes leave above the digits and below the age, so the top and bottom
+            // margins match the sides.
+            .padding(.top, -6)
+            GlucoseWidgetChart(display: display, showsArea: false)
             Text(display.shortAgeText)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+                .padding(.bottom, -2.75)
         }
     }
 
@@ -298,8 +302,6 @@ private struct GlucoseWidgetChart: View {
     @Environment(\.widgetRenderingMode) private var renderingMode
     let display: GlucoseWidgetDisplay
     let showsArea: Bool
-    /// Shades the target range as a band in place of the dashed limit lines.
-    var showsRangeBand = false
 
     /// StandBy's night mode turns everything red and sets brightness from lightness, so there the chart is drawn in
     /// white and the limits in lighter greys, to stay as clear as the clock.
@@ -378,21 +380,10 @@ private struct GlucoseWidgetChart: View {
             GeometryReader { geometry in
                 if let plotFrame = proxy.plotFrame {
                     let frame = geometry[plotFrame]
-                    if showsRangeBand {
-                        if let top = proxy.position(forY: display.highLine),
-                           let bottom = proxy.position(forY: display.lowLine)
-                        {
-                            Rectangle()
-                                .fill(Color.primary.opacity(0.25))
-                                .frame(width: frame.width, height: max(0, bottom - top))
-                                .position(x: frame.midX, y: frame.minY + (top + bottom) / 2)
-                        }
-                    } else {
-                        ForEach([display.highLine, display.lowLine], id: \.self) { value in
-                            if let y = proxy.position(forY: value) {
-                                limitLine(width: frame.width)
-                                    .position(x: frame.midX, y: frame.minY + y)
-                            }
+                    ForEach([display.highLine, display.lowLine], id: \.self) { value in
+                        if let y = proxy.position(forY: value) {
+                            limitLine(width: frame.width)
+                                .position(x: frame.midX, y: frame.minY + y)
                         }
                     }
                 }
