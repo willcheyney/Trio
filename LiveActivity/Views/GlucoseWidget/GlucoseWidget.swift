@@ -222,46 +222,46 @@ struct GlucoseWidgetView: View {
         }
     }
 
-    /// Reading, trend and unit on the top line with the change on the right, the last hour's chart over the
-    /// target limits below, and the reading's age and Trio's eventual glucose underneath.
+    /// Reading, trend and change on the top line with the reading's age on the right, and the last hour's chart
+    /// over the target limits below, with Trio's eventual glucose in the bottom right corner.
     private func rectangular(_ display: GlucoseWidgetDisplay) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
+        VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(display.glucose)
-                    .font(.system(size: 26, weight: .semibold))
+                    .font(.system(size: 32, weight: .semibold))
                     .foregroundStyle(display.isStale ? .secondary : .primary)
                     .layoutPriority(1)
                 Text(display.direction)
-                    .font(.system(size: 16, weight: .medium))
-                Text(display.isMgdL ? "mg/dL" : "mmol/L")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 18, weight: .medium))
+                Text(display.delta)
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 2)
-                Text(display.delta)
+                Text(display.shortAgeText)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.secondary)
             }
             .lineLimit(1)
             .minimumScaleFactor(0.6)
-            // Trim the space the line boxes leave above the digits and below the age, so the top and bottom
-            // margins match the sides.
-            .padding(.top, -6)
-            GlucoseWidgetChart(display: display, showsArea: false)
-            HStack(spacing: 3) {
-                Text(display.shortAgeText)
-                Spacer(minLength: 0)
+            // Trim the space the line box leaves above the digits, so the top margin matches the sides.
+            .padding(.top, -7.5)
+            HStack(alignment: .bottom, spacing: 4) {
+                GlucoseWidgetChart(display: display, showsArea: false)
                 if !display.eventualGlucose.isEmpty {
                     // The same arrow and value Trio's home screen shows for its eventual glucose.
-                    Image(systemName: "arrow.right.circle")
-                        .font(.system(size: 9.5, weight: .medium))
-                    Text(display.eventualGlucose)
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.right.circle")
+                            .font(.system(size: 9.5, weight: .medium))
+                        Text(display.eventualGlucose)
+                    }
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .fixedSize()
+                    // The icon is a little taller than the digits, so it sets the bottom edge.
+                    .padding(.bottom, -1.75)
                 }
             }
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-            // The forecast's icon is centred on the digits but a little taller, so it sets the bottom edge when shown.
-            .padding(.bottom, display.eventualGlucose.isEmpty ? -2.75 : -1.75)
         }
     }
 
