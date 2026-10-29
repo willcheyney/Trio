@@ -112,6 +112,14 @@ private struct GlucoseWidgetDisplay {
         return "\(minutes / 60)h ago"
     }
 
+    /// The reading's age without "ago", e.g. "2m".
+    var shortAgeText: String {
+        let minutes = Int(age / 60)
+        if minutes < 1 { return "now" }
+        if minutes < 60 { return "\(minutes)m" }
+        return "\(minutes / 60)h"
+    }
+
     /// Colour of the reading: the static Trio colours for low and high, primary in range.
     var glucoseColor: Color {
         if isStale { return .secondary }
@@ -206,25 +214,32 @@ struct GlucoseWidgetView: View {
         }
     }
 
+    /// Reading, trend and unit on the top line with the change on the right, the last hour's chart over the
+    /// target range below, and the reading's age underneath.
     private func rectangular(_ display: GlucoseWidgetDisplay) -> some View {
-        HStack(spacing: 4) {
-            VStack(alignment: .leading, spacing: -2) {
-                HStack(alignment: .center, spacing: 2) {
-                    Text(display.glucose)
-                        .font(.system(size: 44, weight: .medium))
-                        .foregroundStyle(display.isStale ? .secondary : .primary)
-                    Text(display.direction)
-                        .font(.system(size: 26, weight: .semibold))
-                }
-                .minimumScaleFactor(0.5)
-                .lineLimit(1)
-                Text(display.delta.isEmpty ? display.ageText : "\(display.delta) · \(display.ageText)")
-                    .font(.system(size: 12, weight: .medium))
-                    .lineLimit(1)
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(display.glucose)
+                    .font(.system(size: 26, weight: .semibold))
+                    .foregroundStyle(display.isStale ? .secondary : .primary)
+                    .layoutPriority(1)
+                Text(display.direction)
+                    .font(.system(size: 16, weight: .medium))
+                Text(display.isMgdL ? "mg/dL" : "mmol/L")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 2)
+                Text(display.delta)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.secondary)
             }
-            .frame(maxHeight: .infinity)
-            .layoutPriority(1)
-            GlucoseWidgetChart(display: display, showsArea: false)
+            .lineLimit(1)
+            .minimumScaleFactor(0.6)
+            GlucoseWidgetChart(display: display, showsArea: false, showsRangeBand: true)
+            Text(display.shortAgeText)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
     }
 
@@ -283,6 +298,8 @@ private struct GlucoseWidgetChart: View {
     @Environment(\.widgetRenderingMode) private var renderingMode
     let display: GlucoseWidgetDisplay
     let showsArea: Bool
+    /// Shades the target range as a band in place of the dashed limit lines.
+    var showsRangeBand = false
 
     /// StandBy's night mode turns everything red and sets brightness from lightness, so there the chart is drawn in
     /// white and the limits in lighter greys, to stay as clear as the clock.
@@ -361,10 +378,21 @@ private struct GlucoseWidgetChart: View {
             GeometryReader { geometry in
                 if let plotFrame = proxy.plotFrame {
                     let frame = geometry[plotFrame]
-                    ForEach([display.highLine, display.lowLine], id: \.self) { value in
-                        if let y = proxy.position(forY: value) {
-                            limitLine(width: frame.width)
-                                .position(x: frame.midX, y: frame.minY + y)
+                    if showsRangeBand {
+                        if let top = proxy.position(forY: display.highLine),
+                           let bottom = proxy.position(forY: display.lowLine)
+                        {
+                            Rectangle()
+                                .fill(Color.primary.opacity(0.25))
+                                .frame(width: frame.width, height: max(0, bottom - top))
+                                .position(x: frame.midX, y: frame.minY + (top + bottom) / 2)
+                        }
+                    } else {
+                        ForEach([display.highLine, display.lowLine], id: \.self) { value in
+                            if let y = proxy.position(forY: value) {
+                                limitLine(width: frame.width)
+                                    .position(x: frame.midX, y: frame.minY + y)
+                            }
                         }
                     }
                 }
