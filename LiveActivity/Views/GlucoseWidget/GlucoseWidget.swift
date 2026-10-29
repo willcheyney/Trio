@@ -112,14 +112,6 @@ private struct GlucoseWidgetDisplay {
         return "\(minutes / 60)h ago"
     }
 
-    /// Trio's eventual glucose, e.g. "6.2"; empty when its last loop is more than 15 minutes old.
-    var eventualGlucose: String {
-        guard let glucose = snapshot.eventualGlucose, let loopDate = snapshot.eventualGlucoseDate,
-              date.timeIntervalSince(loopDate) < Self.staleAfter
-        else { return "" }
-        return format(glucose)
-    }
-
     /// The reading's age without "ago", e.g. "2m".
     var shortAgeText: String {
         let minutes = Int(age / 60)
@@ -223,7 +215,7 @@ struct GlucoseWidgetView: View {
     }
 
     /// Reading, trend and change on the top line with the reading's age on the right, and the last hour's chart
-    /// over the target limits below, with Trio's eventual glucose in the bottom right corner.
+    /// over the target limits below, filling the rest of the widget.
     private func rectangular(_ display: GlucoseWidgetDisplay) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
@@ -245,23 +237,7 @@ struct GlucoseWidgetView: View {
             .minimumScaleFactor(0.6)
             // Trim the space the line box leaves above the digits, so the top margin matches the sides.
             .padding(.top, -7.5)
-            HStack(alignment: .bottom, spacing: 4) {
-                GlucoseWidgetChart(display: display, showsArea: false)
-                if !display.eventualGlucose.isEmpty {
-                    // The same arrow and value Trio's home screen shows for its eventual glucose.
-                    HStack(spacing: 3) {
-                        Image(systemName: "arrow.right.circle")
-                            .font(.system(size: 9.5, weight: .medium))
-                        Text(display.eventualGlucose)
-                    }
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .fixedSize()
-                    // The icon is a little taller than the digits, so it sets the bottom edge.
-                    .padding(.bottom, -1.75)
-                }
-            }
+            GlucoseWidgetChart(display: display, showsArea: false)
         }
     }
 
@@ -460,9 +436,7 @@ extension GlucoseWidgetSnapshot {
                 Reading(date: now.addingTimeInterval(Double(-$0.offset) * 5 * 60), glucose: $0.element)
             },
             direction: "→",
-            unit: GlucoseUnits.mmolL.rawValue,
-            eventualGlucose: 112,
-            eventualGlucoseDate: now
+            unit: GlucoseUnits.mmolL.rawValue
         )
     }
 }

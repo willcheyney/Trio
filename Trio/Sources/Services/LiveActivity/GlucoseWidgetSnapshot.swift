@@ -17,9 +17,6 @@ struct GlucoseWidgetSnapshot: Codable, Equatable {
     let direction: String?
     /// "mg/dL" or "mmol/L".
     let unit: String
-    /// Trio's eventual glucose in mg/dL from its latest loop, and when that loop ran; nil when there is none.
-    var eventualGlucose: Int?
-    var eventualGlucoseDate: Date?
 
     /// WidgetKit kind of the glucose widget, used to reload its timelines.
     static let kind = "TrioGlucoseWidget"

@@ -170,7 +170,6 @@ final class LiveActivityData: ObservableObject {
     private func loadDetermination() async {
         do {
             data.determination = try await fetchAndMapDetermination()
-            await updateGlucoseWidget()
         } catch {
             debug(
                 .default,
@@ -449,9 +448,7 @@ final class LiveActivityData: ObservableObject {
             readings: glucose.filter { $0.date > threeHoursAgo }
                 .map { GlucoseWidgetSnapshot.Reading(date: $0.date, glucose: $0.glucose) },
             direction: latest.direction?.symbol,
-            unit: settings.units.rawValue,
-            eventualGlucose: data.determination?.eventualGlucose,
-            eventualGlucoseDate: data.determination?.date
+            unit: settings.units.rawValue
         )
         guard snapshot != previous else { return }
         snapshot.save()

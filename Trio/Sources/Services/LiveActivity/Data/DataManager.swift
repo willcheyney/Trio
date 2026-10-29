@@ -101,8 +101,7 @@ extension LiveActivityManager {
                 date: determination.deliverAt,
                 minForecast: minForecast,
                 maxForecast: maxForecast,
-                forecastLines: forecastLines,
-                eventualGlucose: determination.eventualBG.map { Int(truncating: $0) }
+                forecastLines: forecastLines
             )
         }
     }
