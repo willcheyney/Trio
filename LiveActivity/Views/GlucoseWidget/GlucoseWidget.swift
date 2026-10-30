@@ -112,6 +112,14 @@ private struct GlucoseWidgetDisplay {
         return "\(minutes / 60)h ago"
     }
 
+    /// Trio's eventual glucose, e.g. "6.2"; empty when its last loop is more than 15 minutes old.
+    var eventualGlucose: String {
+        guard let glucose = snapshot.eventualGlucose, let loopDate = snapshot.eventualGlucoseDate,
+              date.timeIntervalSince(loopDate) < Self.staleAfter
+        else { return "" }
+        return format(glucose)
+    }
+
     /// The reading's age without "ago", e.g. "2m".
     var shortAgeText: String {
         let minutes = Int(age / 60)
@@ -214,32 +222,85 @@ struct GlucoseWidgetView: View {
         }
     }
 
-    /// Reading, trend and change on the top line with the reading's age on the right, and the last hour's chart
-    /// over the target limits below, filling the rest of the widget.
+    /// The headline line over the last hour's chart and its target limits, filling the rest of the widget.
     private func rectangular(_ display: GlucoseWidgetDisplay) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text(display.glucose)
-                    .font(.system(size: 32, weight: .semibold))
-                    .foregroundStyle(display.isStale ? .secondary : .primary)
-                    .layoutPriority(1)
-                Text(display.direction)
-                    .font(.system(size: 18, weight: .medium))
-                Text(display.delta)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.secondary)
-                Spacer(minLength: 2)
-                Text(display.shortAgeText)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.secondary)
-            }
-            .lineLimit(1)
-            .minimumScaleFactor(0.6)
-            // Trim most of the space the line box leaves above the digits. What remains matches the gap the text
-            // keeps to the sides, which measured about 28px on a 3x lock screen.
-            .padding(.top, -5.75)
+            headline(
+                display,
+                readingSize: 32,
+                readingWeight: .semibold,
+                readingStyle: display.isStale ? .secondary : .primary,
+                detailStyle: AnyShapeStyle(.secondary),
+                // Matches the gap the text keeps to the sides, which measured about 28px on a 3x lock screen.
+                topGap: 1.75
+            )
             GlucoseWidgetChart(display: display, showsArea: false)
         }
+    }
+
+    /// The reading, trend arrow, change and age on the left, and Trio's eventual glucose on the right.
+    ///
+    /// When the line is too long, as with "12.4 ↗ +0.2 · 12m ⇢ 13.5", the reading steps down in size first, then
+    /// everything else with it, until it fits. `topGap` is the space left above the digits.
+    private func headline(
+        _ display: GlucoseWidgetDisplay,
+        readingSize: CGFloat,
+        readingWeight: Font.Weight,
+        readingStyle: Color,
+        detailStyle: AnyShapeStyle,
+        topGap: CGFloat
+    ) -> some View {
+        let steps: [(reading: CGFloat, detail: CGFloat)] = [
+            (1, 1), (0.9, 1), (0.8, 1), (0.75, 0.92), (0.7, 0.85), (0.65, 0.78), (0.6, 0.7)
+        ]
+        return ViewThatFits(in: .horizontal) {
+            ForEach(steps.indices, id: \.self) { index in
+                let size = readingSize * steps[index].reading
+                headlineLine(
+                    display,
+                    readingSize: size,
+                    readingWeight: readingWeight,
+                    readingStyle: readingStyle,
+                    detailSize: 13 * steps[index].detail,
+                    detailStyle: detailStyle
+                )
+                // The line box leaves about a quarter of the reading's size above its digits; trim it to `topGap`.
+                .padding(.top, topGap - size * 0.234)
+            }
+        }
+    }
+
+    private func headlineLine(
+        _ display: GlucoseWidgetDisplay,
+        readingSize: CGFloat,
+        readingWeight: Font.Weight,
+        readingStyle: Color,
+        detailSize: CGFloat,
+        detailStyle: AnyShapeStyle
+    ) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            Text(display.glucose)
+                .font(.system(size: readingSize, weight: readingWeight))
+                .foregroundStyle(readingStyle)
+            Text(display.direction)
+                .font(.system(size: readingSize * 0.56, weight: .medium))
+                .foregroundStyle(readingStyle)
+            Text(display.delta.isEmpty ? display.shortAgeText : "\(display.delta) · \(display.shortAgeText)")
+                .foregroundStyle(detailStyle)
+            Spacer(minLength: 4)
+            if !display.eventualGlucose.isEmpty {
+                // The same arrow and value Trio's home screen shows for its eventual glucose.
+                HStack(spacing: 3) {
+                    Image(systemName: "arrow.right.circle")
+                        .font(.system(size: detailSize * 0.85, weight: .medium))
+                    Text(display.eventualGlucose)
+                }
+                .foregroundStyle(detailStyle)
+            }
+        }
+        .font(.system(size: detailSize, weight: .medium))
+        .lineLimit(1)
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     /// StandBy's night mode tints the widget red and sets brightness from each colour's lightness, so colours and
@@ -248,7 +309,32 @@ struct GlucoseWidgetView: View {
         renderingMode == .vibrant ? .white : display.glucoseColor
     }
 
-    private func small(_ display: GlucoseWidgetDisplay) -> some View {
+    /// In StandBy, the same headline as the lock screen over the shaded chart, inset at the top and bottom to line
+    /// up with the clock beside it.
+    private func standBy(_ display: GlucoseWidgetDisplay) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            headline(
+                display,
+                readingSize: 34,
+                readingWeight: .bold,
+                readingStyle: readingColor(display),
+                detailStyle: renderingMode == .vibrant ? AnyShapeStyle(Color.white.opacity(0.8)) : AnyShapeStyle(.secondary),
+                topGap: 0
+            )
+            GlucoseWidgetChart(display: display, showsArea: true)
+        }
+        .padding(.vertical, 6)
+    }
+
+    @ViewBuilder private func small(_ display: GlucoseWidgetDisplay) -> some View {
+        if showsBackground {
+            homeScreen(display)
+        } else {
+            standBy(display)
+        }
+    }
+
+    private func homeScreen(_ display: GlucoseWidgetDisplay) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 0) {
@@ -287,8 +373,6 @@ struct GlucoseWidgetView: View {
             }
             GlucoseWidgetChart(display: display, showsArea: true)
         }
-        // In StandBy, inset the top and bottom to line up with the clock beside it.
-        .padding(.vertical, showsBackground ? 0 : 6)
     }
 }
 
@@ -437,7 +521,9 @@ extension GlucoseWidgetSnapshot {
                 Reading(date: now.addingTimeInterval(Double(-$0.offset) * 5 * 60), glucose: $0.element)
             },
             direction: "→",
-            unit: GlucoseUnits.mmolL.rawValue
+            unit: GlucoseUnits.mmolL.rawValue,
+            eventualGlucose: 112,
+            eventualGlucoseDate: now
         )
     }
 }
