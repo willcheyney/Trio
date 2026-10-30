@@ -241,7 +241,8 @@ struct GlucoseWidgetView: View {
     /// The reading, trend arrow, change and age on the left, and Trio's eventual glucose on the right.
     ///
     /// When the line is too long, as with "12.4 ↗ +0.2 · 12m ⇢ 13.5", the reading steps down in size first, then
-    /// everything else with it, until it fits. `topGap` is the space left above the digits.
+    /// everything else with it, until it fits. The chosen line then fills the width, so the eventual glucose sits
+    /// against the right edge. `topGap` is the space left above the digits.
     private func headline(
         _ display: GlucoseWidgetDisplay,
         readingSize: CGFloat,
@@ -288,19 +289,23 @@ struct GlucoseWidgetView: View {
             Text(display.delta.isEmpty ? display.shortAgeText : "\(display.delta) · \(display.shortAgeText)")
                 .foregroundStyle(detailStyle)
             Spacer(minLength: 4)
-            if !display.eventualGlucose.isEmpty {
-                // The same arrow and value Trio's home screen shows for its eventual glucose.
-                HStack(spacing: 3) {
-                    Image(systemName: "arrow.right.circle")
-                        .font(.system(size: detailSize * 0.85, weight: .medium))
-                    Text(display.eventualGlucose)
-                }
+            eventualGlucose(display, size: detailSize)
                 .foregroundStyle(detailStyle)
-            }
         }
         .font(.system(size: detailSize, weight: .medium))
         .lineLimit(1)
-        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    /// The same arrow and value Trio's home screen shows for its eventual glucose; nothing when there is none.
+    @ViewBuilder private func eventualGlucose(_ display: GlucoseWidgetDisplay, size: CGFloat) -> some View {
+        if !display.eventualGlucose.isEmpty {
+            HStack(spacing: 3) {
+                Image(systemName: "arrow.right.circle")
+                    .font(.system(size: size * 0.85, weight: .medium))
+                Text(display.eventualGlucose)
+                    .font(.system(size: size, weight: .medium))
+            }
+        }
     }
 
     /// StandBy's night mode tints the widget red and sets brightness from each colour's lightness, so colours and
@@ -309,54 +314,21 @@ struct GlucoseWidgetView: View {
         renderingMode == .vibrant ? .white : display.glucoseColor
     }
 
-    /// In StandBy, the same headline as the lock screen over the shaded chart, inset at the top and bottom to line
-    /// up with the clock beside it.
-    private func standBy(_ display: GlucoseWidgetDisplay) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            headline(
-                display,
-                readingSize: 34,
-                readingWeight: .bold,
-                readingStyle: readingColor(display),
-                detailStyle: renderingMode == .vibrant ? AnyShapeStyle(Color.white.opacity(0.8)) : AnyShapeStyle(.secondary),
-                topGap: 0
-            )
-            GlucoseWidgetChart(display: display, showsArea: true)
-        }
-        .padding(.vertical, 6)
-    }
-
-    @ViewBuilder private func small(_ display: GlucoseWidgetDisplay) -> some View {
-        if showsBackground {
-            homeScreen(display)
-        } else {
-            standBy(display)
-        }
-    }
-
-    private func homeScreen(_ display: GlucoseWidgetDisplay) -> some View {
+    private func small(_ display: GlucoseWidgetDisplay) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 0) {
-                    HStack(alignment: .center, spacing: 3) {
-                        Text(display.glucose)
-                            .font(.system(size: 34, weight: .bold))
-                            .foregroundStyle(readingColor(display))
-                        Text(display.direction)
-                            .font(.system(size: 20, weight: .semibold))
-                            .foregroundStyle(readingColor(display))
-                    }
-                    .minimumScaleFactor(0.6)
-                    .lineLimit(1)
-                    // The line box leaves about 7pt above the digits; pull them up so the top margin matches the left.
-                    .padding(.top, -7)
-                    Text(display.delta.isEmpty ? display.ageText : "\(display.delta) · \(display.ageText)")
-                        .font(.caption)
-                        .foregroundStyle(
-                            renderingMode == .vibrant ? AnyShapeStyle(Color.white.opacity(0.8)) : AnyShapeStyle(.secondary)
-                        )
-                        .lineLimit(1)
+                HStack(alignment: .center, spacing: 3) {
+                    Text(display.glucose)
+                        .font(.system(size: 34, weight: .bold))
+                        .foregroundStyle(readingColor(display))
+                    Text(display.direction)
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(readingColor(display))
                 }
+                .minimumScaleFactor(0.6)
+                .lineLimit(1)
+                // The line box leaves about 7pt above the digits; pull them up so the top margin matches the left.
+                .padding(.top, -7)
                 Spacer(minLength: 0)
                 Button(intent: RefreshGlucoseWidgetIntent()) {
                     // Fixed icon size, so StandBy's larger text settings can't overflow the button.
@@ -371,8 +343,20 @@ struct GlucoseWidgetView: View {
                 }
                 .buttonStyle(.plain)
             }
+            // The change and age under the reading, and Trio's eventual glucose against the right edge.
+            HStack(spacing: 4) {
+                Text(display.delta.isEmpty ? display.ageText : "\(display.delta) · \(display.ageText)")
+                    .font(.caption)
+                Spacer(minLength: 4)
+                eventualGlucose(display, size: 12)
+            }
+            .foregroundStyle(renderingMode == .vibrant ? AnyShapeStyle(Color.white.opacity(0.8)) : AnyShapeStyle(.secondary))
+            .lineLimit(1)
+            .padding(.top, -4)
             GlucoseWidgetChart(display: display, showsArea: true)
         }
+        // In StandBy, inset the top and bottom to line up with the clock beside it.
+        .padding(.vertical, showsBackground ? 0 : 6)
     }
 }
 
