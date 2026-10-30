@@ -227,7 +227,7 @@ struct GlucoseWidgetView: View {
         VStack(alignment: .leading, spacing: 2) {
             headline(
                 display,
-                readingSize: 32,
+                readingSize: 24,
                 readingWeight: .semibold,
                 readingStyle: display.isStale ? .secondary : .primary,
                 detailStyle: AnyShapeStyle(.secondary),
@@ -240,9 +240,9 @@ struct GlucoseWidgetView: View {
 
     /// The reading, trend arrow, change and age on the left, and Trio's eventual glucose on the right.
     ///
-    /// When the line is too long, as with "12.4 ↗ +0.2 · 12m ⇢ 13.5", the reading steps down in size first, then
-    /// everything else with it, until it fits. The chosen line then fills the width, so the eventual glucose sits
-    /// against the right edge. `topGap` is the space left above the digits.
+    /// The reading keeps one size, so it doesn't jump when it reaches double digits. If the line is still too
+    /// long, the smaller text steps down in size until it fits. The chosen line then fills the width, so the
+    /// eventual glucose sits against the right edge. `topGap` is the space left above the digits.
     private func headline(
         _ display: GlucoseWidgetDisplay,
         readingSize: CGFloat,
@@ -251,24 +251,20 @@ struct GlucoseWidgetView: View {
         detailStyle: AnyShapeStyle,
         topGap: CGFloat
     ) -> some View {
-        let steps: [(reading: CGFloat, detail: CGFloat)] = [
-            (1, 1), (0.9, 1), (0.8, 1), (0.75, 0.92), (0.7, 0.85), (0.65, 0.78), (0.6, 0.7)
-        ]
-        return ViewThatFits(in: .horizontal) {
-            ForEach(steps.indices, id: \.self) { index in
-                let size = readingSize * steps[index].reading
+        ViewThatFits(in: .horizontal) {
+            ForEach([13, 12, 11, 10, 9] as [CGFloat], id: \.self) { detailSize in
                 headlineLine(
                     display,
-                    readingSize: size,
+                    readingSize: readingSize,
                     readingWeight: readingWeight,
                     readingStyle: readingStyle,
-                    detailSize: 13 * steps[index].detail,
+                    detailSize: detailSize,
                     detailStyle: detailStyle
                 )
-                // The line box leaves about a quarter of the reading's size above its digits; trim it to `topGap`.
-                .padding(.top, topGap - size * 0.234)
             }
         }
+        // The line box leaves about a quarter of the reading's size above its digits; trim it to `topGap`.
+        .padding(.top, topGap - readingSize * 0.234)
     }
 
     private func headlineLine(
@@ -279,21 +275,27 @@ struct GlucoseWidgetView: View {
         detailSize: CGFloat,
         detailStyle: AnyShapeStyle
     ) -> some View {
+        // Each item keeps its full width rather than truncating, so ViewThatFits sees the line's true length;
+        // only the spacer between the two sides gives.
         HStack(alignment: .firstTextBaseline, spacing: 4) {
             Text(display.glucose)
                 .font(.system(size: readingSize, weight: readingWeight))
                 .foregroundStyle(readingStyle)
+                .fixedSize()
             Text(display.direction)
                 .font(.system(size: readingSize * 0.56, weight: .medium))
                 .foregroundStyle(readingStyle)
+                .fixedSize()
             Text(display.delta.isEmpty ? display.shortAgeText : "\(display.delta) · \(display.shortAgeText)")
                 .foregroundStyle(detailStyle)
-            Spacer(minLength: 4)
+                .fixedSize()
+            // The stack's spacing already keeps 8pt between the two sides.
+            Spacer(minLength: 0)
             eventualGlucose(display, size: detailSize)
                 .foregroundStyle(detailStyle)
+                .fixedSize()
         }
         .font(.system(size: detailSize, weight: .medium))
-        .lineLimit(1)
     }
 
     /// The same arrow and value Trio's home screen shows for its eventual glucose; nothing when there is none.
