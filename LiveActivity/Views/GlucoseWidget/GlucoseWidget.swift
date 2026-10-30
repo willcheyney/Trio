@@ -128,12 +128,9 @@ private struct GlucoseWidgetDisplay {
         return "\(minutes / 60)h"
     }
 
-    /// Colour of the reading: the static Trio colours for low and high, primary in range.
+    /// Colour of the reading: primary, or secondary once it is stale. It doesn't change with the glucose value.
     var glucoseColor: Color {
-        if isStale { return .secondary }
-        if displayValue(latest.glucose) < lowLine { return .staticLow }
-        if displayValue(latest.glucose) > highLine { return .staticHigh }
-        return .primary
+        isStale ? .secondary : .primary
     }
 
     /// Whether the latest reading, as displayed, is within the widget's limits.
