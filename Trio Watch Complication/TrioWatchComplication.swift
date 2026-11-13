@@ -194,9 +194,11 @@ struct TrioAccessoryCircularView: View {
                     .foregroundStyle(.white)
                     .offset(y: -size * 0.25)
 
+                // Same font, weight and size as the reading in Apple's circular complications on the Modular Ultra
+                // face (temperature, battery), measured from a screenshot: SF Compact semibold at 39.5% of the width.
                 Text(entry.glucoseText)
-                    .font(.system(size: size * 0.36, weight: .medium, design: .rounded))
-                    .tracking(-size * 0.0144)
+                    .font(.system(size: size * 0.395, weight: .semibold))
+                    .tracking(-size * 0.014)
                     .foregroundStyle(entry.isStale ? Color.gray : Color(red: 0xF2 / 255, green: 0xF2 / 255, blue: 0xF2 / 255))
                     .minimumScaleFactor(0.5)
                     .lineLimit(1)
