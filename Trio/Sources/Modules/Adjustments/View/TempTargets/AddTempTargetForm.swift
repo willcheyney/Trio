@@ -34,10 +34,8 @@ struct AddTempTargetForm: View {
                 saveButton
             }
             .listSectionSpacing(10)
-            // iOS's default on iPhone; iPhone Duo defaults to 0, which put the first row under the sheet's bar
-            .contentMargins(.top, 35, for: .scrollContent)
-            .padding(.top, 30)
-            .ignoresSafeArea(edges: .top)
+            .contentMargins(.top, sheetListTopMargin, for: .scrollContent)
+            .sheetListTopInset(legacyTopPadding: 30)
             .scrollContentBackground(.hidden)
             .background(appState.trioBackgroundColor(for: colorScheme))
             .navigationTitle("Add Temp Target")
