@@ -440,7 +440,7 @@ extension Treatments {
                         }
                         .listSectionSpacing(sectionSpacing)
                         // iOS's default on iPhone; iPhone Duo defaults to 0, which put the first row under the sheet's bar
-                        .contentMargins(.top, 35, for: .scrollContent)
+                        .contentMargins(.top, treatmentsListTopMargin, for: .scrollContent)
                         .onChange(of: focusedField) { _, newValue in
                             scrollFocusedFieldIntoView(newValue, proxy: proxy)
                         }
@@ -467,8 +467,7 @@ extension Treatments {
                     CustomProgressView(text: progressText.displayName)
                 }
             }
-            .padding(.top)
-            .ignoresSafeArea(edges: .top)
+            .modifier(TreatmentsTopInset())
             .scrollContentBackground(.hidden).background(appState.trioBackgroundColor(for: colorScheme))
             .blur(radius: state.showInfo ? 3 : 0)
             .navigationTitle("Treatments")
@@ -798,6 +797,32 @@ extension Treatments {
                 .frame(height: 1)
                 .foregroundColor(.gray.opacity(0.65))
                 .padding(.vertical)
+        }
+    }
+}
+
+/// Before iOS 27 the list runs up under the sheet's navigation bar, starting just below the top padding, to save
+/// space on small screens. iOS 27's navigation bar, with its glass buttons, is taller than that padding plus the
+/// list's top margin, so the chart card's top was hidden under it and the bar drew its scroll-edge background.
+/// On iOS 27 the list keeps the safe area, starting below the bar like Add Glucose.
+/// The list's top margin. On iOS 27 the list starts below the navigation bar (see `TreatmentsTopInset`), where
+/// iOS's default 35 pt left a 44.5 pt gap under the bar's buttons; 6.5 pt makes that gap 16 pt, the same as the
+/// cards' side margins.
+private var treatmentsListTopMargin: CGFloat {
+    if #available(iOS 27.0, *) {
+        return 6.5
+    }
+    return 35
+}
+
+private struct TreatmentsTopInset: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 27.0, *) {
+            content
+        } else {
+            content
+                .padding(.top)
+                .ignoresSafeArea(edges: .top)
         }
     }
 }
