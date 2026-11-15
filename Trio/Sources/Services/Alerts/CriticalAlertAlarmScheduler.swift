@@ -1,6 +1,7 @@
 import Foundation
 import LoopKit
 import os.log
+import UIKit
 
 #if canImport(AlarmKit)
     import ActivityKit
@@ -68,10 +69,10 @@ final class CriticalAlertAlarmScheduler {
     /// caller can still play the fallback rather than leaving the alert silent.
     ///
     /// `stopAfter` turns the alarm into a short chime for CGM-style glucose
-    /// alarms: Trio stops it that many seconds after it starts ringing. If iOS
-    /// suspends Trio first, the stop runs as soon as Trio is next woken (e.g.
-    /// by the next CGM reading), so the alarm can ring longer but never stays
-    /// silent. Stopping it this way is not an acknowledgement.
+    /// alarms: Trio stops it that many seconds after AlarmKit reports it
+    /// ringing. A background task keeps Trio running until then, so the chime
+    /// lasts the same time whether the phone is locked or not. Stopping it
+    /// this way is not an acknowledgement.
     @discardableResult func scheduleAlarm(
         for alert: Alert,
         stopAfter: TimeInterval? = nil,
@@ -111,7 +112,11 @@ final class CriticalAlertAlarmScheduler {
             alarmsByAlert[alert.identifier] = id
             let log = self.log
             let identifier = alert.identifier
+            // Without this, iOS can suspend Trio before the stop runs and the
+            // chime rings on until Trio is next woken (often the next reading).
+            let backgroundTask = stopAfter.map { _ in ChimeBackgroundTask(name: "Trio chime \(identifier.value)") }
             Task { [weak self] in
+                defer { backgroundTask?.end() }
                 do {
                     _ = try await AlarmManager.shared.schedule(id: id, configuration: configuration)
                     os_log(
@@ -119,8 +124,7 @@ final class CriticalAlertAlarmScheduler {
                         log: log, type: .info, id.uuidString, identifier.value
                     )
                     if let stopAfter {
-                        try? await Task.sleep(nanoseconds: UInt64((Self.immediateFireDelay + stopAfter) * 1_000_000_000))
-                        self?.stopChime(id: id, for: identifier)
+                        await self?.stopChimeAfterRinging(id: id, for: identifier, ringFor: stopAfter)
                     }
                 } catch {
                     os_log(
@@ -137,16 +141,49 @@ final class CriticalAlertAlarmScheduler {
         #endif
     }
 
+    /// How often to check whether a chime's alarm has started ringing.
+    private static let ringPollInterval: TimeInterval = 0.2
+    /// If AlarmKit never reports the chime ringing within this time, stop it
+    /// anyway so it can't ring on indefinitely.
+    private static let ringStartTimeout: TimeInterval = 15
+
+    /// Waits until AlarmKit reports the chime ringing, then stops it
+    /// `ringFor` seconds later, so the chime's length doesn't depend on when
+    /// the alarm actually starts. Polls `AlarmManager.alarms` rather than
+    /// iterating `alarmUpdates`, which only ends on its next element.
+    private func stopChimeAfterRinging(id: UUID, for identifier: Alert.Identifier, ringFor: TimeInterval) async {
+        guard #available(iOS 26, *) else { return }
+        #if canImport(AlarmKit)
+            let deadline = Date().addingTimeInterval(Self.ringStartTimeout)
+            while Date() < deadline {
+                // Replaced by a newer chime, or acknowledged / retracted.
+                guard alarmsByAlert[identifier] == id else { return }
+                let alarm = (try? AlarmManager.shared.alarms)?.first { $0.id == id }
+                if alarm?.state == .alerting {
+                    try? await Task.sleep(nanoseconds: UInt64(ringFor * 1_000_000_000))
+                    stopChime(id: id, for: identifier, ringingObserved: true)
+                    return
+                }
+                try? await Task.sleep(nanoseconds: UInt64(Self.ringPollInterval * 1_000_000_000))
+            }
+            stopChime(id: id, for: identifier, ringingObserved: false)
+        #endif
+    }
+
     /// Ends a short-chime alarm unless it has already been replaced (a newer
     /// chime for the same alert) or cancelled by acknowledge / retract.
-    private func stopChime(id: UUID, for identifier: Alert.Identifier) {
+    private func stopChime(id: UUID, for identifier: Alert.Identifier, ringingObserved: Bool) {
         guard #available(iOS 26, *) else { return }
         #if canImport(AlarmKit)
             guard alarmsByAlert[identifier] == id else { return }
             alarmsByAlert.removeValue(forKey: identifier)
             try? AlarmManager.shared.stop(id: id)
             try? AlarmManager.shared.cancel(id: id)
-            os_log("Stopped AlarmKit chime %{public}@ for %{public}@", log: log, type: .info, id.uuidString, identifier.value)
+            os_log(
+                "Stopped AlarmKit chime %{public}@ for %{public}@ (ringing observed=%{public}@)",
+                log: log, type: .info, id.uuidString, identifier.value, String(ringingObserved)
+            )
+            debug(.service, "CriticalAlertAlarmScheduler: stopped chime \(identifier.value) ringingObserved=\(ringingObserved)")
         #endif
     }
 
@@ -170,6 +207,25 @@ final class CriticalAlertAlarmScheduler {
                 log: log, type: .info, id.uuidString, identifier.value
             )
         #endif
+    }
+}
+
+/// Keeps Trio running in the background while a chime rings so it can stop
+/// the chime on time. Ends itself if iOS's background time runs out first.
+@MainActor private final class ChimeBackgroundTask {
+    private var taskID: UIBackgroundTaskIdentifier = .invalid
+
+    init(name: String) {
+        taskID = UIApplication.shared.beginBackgroundTask(withName: name) { [weak self] in
+            // iOS calls the expiration handler on the main thread.
+            MainActor.assumeIsolated { self?.end() }
+        }
+    }
+
+    func end() {
+        guard taskID != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(taskID)
+        taskID = .invalid
     }
 }
 
